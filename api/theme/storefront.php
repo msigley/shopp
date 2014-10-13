@@ -546,6 +546,7 @@ class ShoppStorefrontThemeAPI implements ShoppAPI {
 			'hierarchy' => true,	// Show hierarchy
 			'include' => '',		// List of term ids to include (comma-separated)
 			'linkall' => false,		// Link to empty categories
+			'linkcount' => false,   // Show products count in category link
 			'parent' => false,		// Show categories with given parent term id
 			'products' => false,	// Show products count
 			'number' => '',			// The maximum number of terms
@@ -561,7 +562,6 @@ class ShoppStorefrontThemeAPI implements ShoppAPI {
 			'wraplist' => true,		// Wrap list in <ul></ul> (only works when dropdown=false)
 
 			// Deprecated options
-			'linkcount' => false,
 			'showsmart' => false,
 		);
 
@@ -1731,9 +1731,15 @@ class ShoppCategoryWalker extends Walker {
 		$link = '<a href="' . esc_url( $link ) . '" title="' . esc_attr( $title ) . '" class="' . $classes . '"';
 		$link .= '>';
 		$link .= $categoryname;
-		if ( false !== $total && Shopp::str_true($products) )
+		if ( false !== $total && Shopp::str_true($linkcount) )
 			$link .= '<span class="cat-total">' . intval($total) . '</span>'; 
 		$link .= '</a>';
+
+		if ( empty($total) && ! Shopp::str_true($linkall) && ! $smartcollection )
+			$link = $categoryname;
+
+		if ( false !== $total && Shopp::str_true($products) )
+			$link .= ' (' . intval($total) . ')';
 
 		if ( empty($total) && ! Shopp::str_true($linkall) && ! $smartcollection )
 			$link = $categoryname;
