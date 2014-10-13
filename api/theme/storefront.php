@@ -585,7 +585,7 @@ class ShoppStorefrontThemeAPI implements ShoppAPI {
 		if ( Shopp::str_true($section) ) {
 
 			if ( ! isset(ShoppCollection()->id) && empty($sectionterm) ) return false;
-			$sectionterm = ShoppCollection()->id;
+			if ( empty($sectionterm) ) $sectionterm = ShoppCollection()->id;
 
 			if ( 0 == ShoppCollection()->parent )
 				$childof = $sectionterm;
