@@ -1730,13 +1730,13 @@ class ShoppCategoryWalker extends Walker {
 
 		$link = '<a href="' . esc_url( $link ) . '" title="' . esc_attr( $title ) . '" class="' . $classes . '"';
 		$link .= '>';
-		$link .= $categoryname . '</a>';
+		$link .= $categoryname;
+		if ( false !== $total && Shopp::str_true($products) )
+			$link .= '<span class="cat-total">' . intval($total) . '</span>'; 
+		$link .= '</a>';
 
 		if ( empty($total) && ! Shopp::str_true($linkall) && ! $smartcollection )
 			$link = $categoryname;
-
-		if ( false !== $total && Shopp::str_true($products) )
-			$link .= ' (' . intval($total) . ')';
 
 		if ( 'list' == $args['style'] ) {
 			$output .= "\t<li";
