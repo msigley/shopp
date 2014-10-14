@@ -713,12 +713,11 @@ class ShoppStorefrontThemeAPI implements ShoppAPI {
 
 		$list = '';
 		if ( Shopp::str_true($wraplist) ) $list .= '<ul' . $class . '>';
-		if ( ! empty($title) ) $list .= '<li>' . $title . '<ul>';
+		if ( ! empty($title) ) $list .= '<li class="cat-title">' . $title . '</li>';
 
 		$list .= $Categories->walk($terms, $depth, $options);
 
 		if ( Shopp::str_true($wraplist) ) $list .= '</ul>';
-		if ( ! empty($title) ) $list .= '</li>';
 		return $before . $list . $after;
 	}
 
