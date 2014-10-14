@@ -28,7 +28,7 @@ function ShoppProduct ( ShoppProduct $Object = null ) {
 	$Shopp = Shopp::object();
 	if ( isset($Object) ) {
 		$Shopp->Product = $Object;
-		do_action( 'ShoppProduct', $Shopp->Product );
+		do_action( 'shopp_product', $Shopp->Product );
 	}
 	return $Shopp->Product;
 }
@@ -46,7 +46,7 @@ function ShoppCustomer ( $Object = false ) {
 	$Order = ShoppOrder();
 	if ( $Object && is_a($Object, 'ShoppCustomer') ) {
 		$Order->Customer = $Object;
-		do_action( 'ShoppCustomer', $Order->Customer );
+		do_action( 'shopp_customer', $Order->Customer );
 	}
 	return $Order->Customer;
 }
@@ -64,7 +64,7 @@ function ShoppCollection ( ProductCollection $Object = null ) {
 	$Shopp = Shopp::object();
 	if ( isset($Object) ) {
 		$Shopp->Category = $Object;
-		do_action( 'ShoppCollection', $Shopp->Category );
+		do_action( 'shopp_collection', $Shopp->Category );
 	}
 	return $Shopp->Category;
 }
