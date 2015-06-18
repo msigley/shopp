@@ -150,6 +150,9 @@ class ShoppPayments extends ListFramework {
 	 * @return ShoppPaymentOption The selected payment option (or false)
 	 **/
 	public function selected ( $selection = null ) {
+		//Sanity check for free order processing
+		if ( 'freeorder' == $selection && 0 < ShoppOrder()->Cart->total() )
+			unset($selection);
 
 		if ( isset($selection) ) {
 			if ( $this->exists($selection) )
