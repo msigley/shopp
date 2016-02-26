@@ -36,7 +36,7 @@ class ShoppScreenSetup extends ShoppSettingsScreenController {
 	}
 
 	public function updates () {
-		if ( ! isset($_POST['settings']['target_markets']) )
+		if ( isset($_POST['settings']['target_markets']) )
 			asort($_POST['settings']['target_markets']);
 
 		// Save all other settings

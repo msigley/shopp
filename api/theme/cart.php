@@ -726,8 +726,8 @@ class ShoppCartThemeAPI implements ShoppAPI {
 	 * @return string The referring page's URL
 	 **/
 	public static function referrer ( $result, $options, $O ) {
-		$Shopping = ShoppShopping();
-		$referrer = $Shopping->data->referrer;
+
+		$referrer = ShoppStorefront()->referrer;
 		if ( ! $referrer ) $referrer = shopp('catalog', 'url', 'return=1');
 		return $referrer;
 	}

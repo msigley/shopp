@@ -586,6 +586,10 @@ abstract class ShoppCore {
 
 		if ($unit == $from) return $value;
 
+		// If we don't know about unit, return 0.
+		if ( ! isset($table[$chart][$from]) ) return 0;
+		if ( ! isset($table[$chart][$unit]) ) return 0;
+
 		$siv = $value * $table[$chart][$from];	// Convert to SI unit value
 		return $siv/$table[$chart][$unit];		// Return target units
 	}
@@ -1633,7 +1637,7 @@ abstract class ShoppCore {
 				$f['decimals'] = substr($format, $de);
 		} else {
 			$currency = substr($format, $de);
-			if ( in_array($currency{0}, $decimals) ) {
+			if ( isset($currency{0}) && in_array($currency{0}, $decimals) ) {
 				$f['decimals'] = $currency{0};
 				$f['currency'] = substr($currency, 1);
 			} else {
@@ -1916,7 +1920,7 @@ abstract class ShoppCore {
 		add_filter('shopp_rss_description','ent2ncr');
 
 		$xmlns = '';
-		if (is_array($data['xmlns']))
+		if ( isset($data['xmlns']) && is_array($data['xmlns']) )
 			foreach ($data['xmlns'] as $key => $value)
 				$xmlns .= 'xmlns:'.$key.'="'.$value.'" ';
 
@@ -1931,7 +1935,7 @@ abstract class ShoppCore {
 		$xml .= "<language>".get_option('rss_language')."</language>\n";
 		$xml .= "<copyright>".esc_html("Copyright ".date('Y').", ".$data['sitename'])."</copyright>\n";
 
-		if (is_array($data['items'])) {
+		if ( isset($data['items']) && is_array($data['items']) ) {
 			foreach($data['items'] as $item) {
 				$xml .= "\t<item>\n";
 				foreach ($item as $key => $value) {

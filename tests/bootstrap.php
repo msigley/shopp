@@ -152,6 +152,9 @@ tests_add_filter('shopp_loaded', 'shopp_tests_install');
 tests_add_filter('shopp_loaded', 'shopp_tests_setup');
 tests_add_filter('shopp_loaded', 'shopp_tests_settings');
 
+// Shopp_Tests_Util_XML
+require 'Shopp_Tests_Util_XML.php';
+
 // Load WordPress
 require_once ABSPATH . 'wp-settings.php';
 
