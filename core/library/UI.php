@@ -139,7 +139,16 @@ abstract class ShoppAdminMetabox extends ShoppRequestFormFramework {
 } // end ShoppAdminMetaBox
 
 class ShoppAdminMenusMetabox extends ShoppAdminMetabox {
+    
+	public function __construct ( $id, $context, $priority, array $args = array() ) {
 
+		add_meta_box($this->id, $this->title() . self::help($this->id), array($this, 'box'), $id, $context, $priority, $args);
+
+        $this->references();
+        $this->init();
+
+	}
+    
 	public function box () {
 		global $_nav_menu_placeholder, $nav_menu_selected_id;
 

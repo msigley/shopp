@@ -225,7 +225,7 @@ abstract class ShoppSessionFramework {
 		if (isset($_SERVER['HTTP_X_MOZ']) && $_SERVER['HTTP_X_MOZ'] == "prefetch" //Firefox
 			|| isset($_SERVER["HTTP_X_PURPOSE"]) //Chrome/Safari
 				&& in_array($_SERVER["HTTP_X_PURPOSE"], array("preview", "instant"))
-			) 
+			)
 			return false;
 
 		if ( empty($this->session) ) return false; // Do not save if there is no session id
@@ -234,7 +234,7 @@ abstract class ShoppSessionFramework {
 			return false; // Encryption failed because of no SSL, do not save
 
 		do_action('shopp_session_save');
-		
+
 		$data = sDB::escape( addslashes(serialize($this->data)) );
 		$this->encrypt($data);
 
@@ -389,8 +389,7 @@ abstract class ShoppSessionFramework {
 		shopp_debug('Cart saving in secure mode!');
 		$secure = self::ENCRYPTION . sDB::query("SELECT AES_ENCRYPT('$data','$key') AS data", 'auto', 'col', 'data');
 
-		$db = sDB::object();
-		$data = $db->api->escape($secure);
+		$data = sDB::str_escape($secure);
 
 	}
 
@@ -422,8 +421,7 @@ abstract class ShoppSessionFramework {
 
 		$key = $_COOKIE[ SHOPP_SECURE_KEY ];
 
-		$db = sDB::object();
-		$data = sDB::query("SELECT AES_DECRYPT('" . $db->api->escape(substr($data, $BOF)) . "','$key') AS data", 'auto', 'col', 'data');
+		$data = sDB::query("SELECT AES_DECRYPT('" . sDB::str_escape(substr($data, $BOF)) . "','$key') AS data", 'auto', 'col', 'data');
 
 	}
 

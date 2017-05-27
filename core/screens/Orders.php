@@ -416,6 +416,7 @@ class ShoppOrdersTable extends ShoppAdminTable {
 		$date_format = str_replace(array('j'), 'd/', $date_format);
 		// Force year display to 4-digits
 		$date_format = str_replace('y', 'Y/', $date_format);
+		$date_format = preg_replace("/[^dmY0-9\/]/", '', $date_format);
 		$this->dates = trim($date_format, '/');
 
 		$this->set_pagination_args( array(

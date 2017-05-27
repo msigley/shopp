@@ -33,6 +33,15 @@ class ShoppScreenTaxes extends ShoppSettingsScreenController {
 	public function actions() {
 		add_action('shopp_admin_settings_actions', array($this, 'delete') );
 	}
+    
+    public static function settings () {
+        $rates = array();
+        $setting = shopp_setting('taxrates');
+        if ( ! empty($setting) ) 
+            $rates = $setting;
+        
+        return $rates;
+    }
 
 	public function delete() {
 		$delete = $this->request('delete');
@@ -40,7 +49,7 @@ class ShoppScreenTaxes extends ShoppSettingsScreenController {
 
 		check_admin_referer('shopp_delete_taxrate');
 
-		$rates = shopp_setting('taxrates');
+		$rates = (array)shopp_setting('taxrates');
 
 		if ( empty($rates[ $delete ]) )
 			return $this->notice(Shopp::__('Could not delete the tax rate because that tax setting was not found.'));
@@ -69,8 +78,8 @@ class ShoppScreenTaxes extends ShoppSettingsScreenController {
 
 	public function updates() {
 
-		$rates = shopp_setting('taxrates');
-
+        $rates = self::settings();
+        
 		$updates = $this->form('taxrates');
 		if ( ! empty($updates) ) {
 			if ( array_key_exists('new', $updates) ) {
@@ -165,7 +174,7 @@ class ShoppScreenTaxes extends ShoppSettingsScreenController {
 
 			if ( '*' != $rate['country'] ) $score++;
 
-			$score += $rate['rate'] / 100;
+			$score += (float)$rate['rate'] / 100;
 		}
 
 		if ( $scoring['a'] == $scoring['b'] ) return 0;
@@ -314,17 +323,17 @@ class ShoppTaxesRatesTable extends ShoppAdminTable {
 		$args = array_merge($defaults, $_GET);
 		extract($args, EXTR_SKIP);
 
-		$rates = (array)shopp_setting('taxrates');
+		$rates = ShoppScreenTaxes::settings();
 
 		$this->items = array();
 		foreach ( $rates as $index => $taxrate )
 			$this->items[ $index ] = array_merge(self::$template, array('id' => $index), $taxrate);
 
-		$specials = array(ShoppTax::ALL => Shopp::__('All Markets'));
-
-		if ( ShoppTax::euvat(false, ShoppBaseLocale()->country(), ShoppTax::EUVAT) )
-			$specials[ ShoppTax::EUVAT ] = Shopp::__('European Union');
-
+		$specials = array(
+            ShoppTax::ALL => Shopp::__('All Markets'),
+            ShoppTax::EUVAT => Shopp::__('European Union')
+        );
+        
 		$this->countries = array_filter(array_merge($specials, (array) shopp_setting('target_markets')));
 		$this->zones = 	ShoppLookup::country_zones();
 

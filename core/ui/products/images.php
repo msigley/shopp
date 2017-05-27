@@ -1,6 +1,8 @@
 	<div id="confirm-delete-images" class="notice hidden"><p><?php _e('Save the product to confirm deleted images.','Shopp'); ?></p></div>
 	<ul id="lightbox">
-	<?php foreach ( (array) $Product->images as $i => $Image ): ?>
+	<?php foreach ( (array) $Product->images as $i => $Image ): 
+        if ( ! is_a($Image, 'ProductImage') ) continue;
+    ?>
 		<li id="image-<?php echo (int)$Image->id; ?>"><input type="hidden" name="images[]" value="<?php echo $Image->id; ?>" />
 			<div id="image-<?php echo (int)$Image->id; ?>-details" title="<?php _e('Double-click images to edit their details&hellip;','Shopp'); ?>">
 				<img src="?siid=<?php echo (int)$Image->id; ?>&amp;<?php echo $Image->resizing(96,0,1); ?>" width="96" height="96" />
