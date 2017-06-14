@@ -455,11 +455,13 @@ class sDB extends SingletonFramework {
 		while ( $row = $db->api->object($result) )
 			call_user_func_array($callback, array_merge( array(&$records, &$row), $args) );
 
-		// Free the results immediately to save memory
-		$db->api->free();
-
 		// Save the found count if it is present
-		if ( isset($rows->found) ) $db->found = (int) $rows->found;
+		if ( isset($rows->found) ) 
+            $db->found = (int) $rows->found;
+        
+		// Free the results immediately to save memory
+		if ( $db->found > 0 )
+            $db->api->free();
 
 		// Handle result format post processing
 		switch (strtolower($format)) {
