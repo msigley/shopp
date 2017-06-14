@@ -123,12 +123,14 @@ class ShoppTax {
 		if ( isset($Item) ) $this->Item = $Item;
 		if ( ! is_array($rates) ) $rates = array();
 
-		$settings = $this->settings();
-
+		$settings = $this->settings();        
+        
+        $baserate = self::baserate($this->Item);
+        
 		foreach ( (array) $settings as $key => $setting ) {
 
 			// Add any local rate to the base rate, then divide by 100 to prepare the rate to be applied
-			$rate = ( self::float($setting['rate']) + self::float($setting['localrate']) ) / 100;
+			$rate = self::taxrate($setting);
 
 			if ( ! isset($rates[ $key ]) ) $rates[ $key ] = new ShoppItemTax();
 			$ShoppItemTax = $rates[ $key ];
@@ -136,13 +138,14 @@ class ShoppTax {
 			$ShoppItemTax->update(array(
 				'label' => $setting['label'],
 				'rate' => $rate,
+                'baserate' => $baserate,
 				'amount' => 0.00,
 				'total' => 0.00,
 				'compound' => $setting['compound']
 			));
 
 		}
-
+        
 		// get list of existing rates that no longer match
 		$unapply = array_keys(array_diff_key($rates, (array) $settings));
 		foreach ( $unapply as $key )
@@ -154,6 +157,22 @@ class ShoppTax {
 		$rates = apply_filters( 'shopp_tax_rates', $rates );
 
 	}
+    
+	/**
+	 * Converts a tax rate setting to a decimal rate to use for tax calculations
+	 *
+	 * @author Jonathan Davis
+	 * @since 1.4
+	 *
+	 * @param array $setting A tax rate setting to convert
+	 * @return float The effective decimal rate
+	 **/
+    protected static function taxrate ($setting) {
+        $rate = isset($setting['rate']) ? self::float($setting['rate']) : 0;
+        $localrate = isset($setting['localrate']) ? self::float($setting['localrate']) : 0;
+        
+        return ( $rate + $localrate ) / 100;
+    }
 
 	/**
 	 * Evaluates if the given country matches the taxable address
@@ -288,18 +307,15 @@ class ShoppTax {
 	 *
 	 * @since 1.3
 	 * @param object $Item A compatible taxable object
-	 * @return array The list of applicable base tax rates
+	 * @return float The base tax rate
 	 **/
-	public static function baserates ( $Item = null ) {
-		// Get base tax rate
+	public static function baserate ( $Item = null ) {
 		$BaseTax = new ShoppTax();
+        $BaseTax->item($Item);
 		$BaseTax->location(ShoppBaseLocale()->country(), false, false);
-
-		// Calculate the deduction
-		$baserates = array();
-		$BaseTax->rates($baserates, $BaseTax->item($Item));
-
-		return (array)$baserates;
+        
+        $settings = $BaseTax->settings();
+		return self::taxrate( reset($settings) );
 	}
 
 	/**
@@ -319,11 +335,9 @@ class ShoppTax {
 	public static function adjustment ( $amount, $rates, $Item ) {
 		if ( ! shopp_setting_enabled('tax_inclusive') ) return 0;
 
-		$baserates = ShoppTax::baserates($Item);
-		$baserate = reset($baserates);
+		$baserate = self::baserate($Item);
 		$appliedrate = self::appliedrate($rates);
 
-		$baserate = isset($baserate->rate) ? $baserate->rate : 0;
 		$appliedrate = isset($appliedrate->rate) ? $appliedrate->rate : 0;
         
 		if ( $baserate == $appliedrate )
@@ -389,10 +403,10 @@ class ShoppTax {
 			$taxrate->amount = 0; // Reset the captured tax amount @see Issue #2430
 
 			// Calculate tax amount
-			$tax = self::tax($taxable, $taxrate->rate);
+			$tax = self::tax($taxable, $taxrate);
 
 			if ( $taxrate->compound ) {
-				$tax = self::tax($compound, $taxrate->rate);
+				$tax = self::tax($compound, $taxrate);
 				$compound += $tax;						 	// Set compound taxable amount for next compound rate
 			}
 
@@ -407,18 +421,20 @@ class ShoppTax {
 	/**
 	 * Calculates the tax amount
 	 *
-	 * The tax calculation used is dependent on the inclsuive tax seeting
+	 * The tax calculation used is dependent on the inclusive tax setting
 	 *
 	 * @since 1.4
 	 * @param float $amount The amount to calculate tax against
-	 * @param float $rate The tax rate
+	 * @param ShoppItemTax $rate The tax rate
 	 * @return float The tax amount
 	 **/
 	private static function tax ($amount, $rate) {
 		$inclusive = shopp_setting_enabled('tax_inclusive');
-
-		if ( $inclusive ) $tax = $amount - ( $amount / (1 + $rate) );
-		else $tax = $amount * $rate;
+        
+		if ( $inclusive ) // Determine the net taxable amount by factoring out the baserate
+            $amount = $amount / ( 1 + $rate->baserate);
+            
+        $tax = $amount * $rate->rate;
 
 		return $tax;
 	}
@@ -596,6 +612,7 @@ class ShoppItemTax extends AutoObjectFramework {
 
 	public $label = '';
 	public $rate = 0.00;
+    public $baserate = 0.00;
 	public $amount = 0.00;
 	public $total = 0.00;
 	public $compound = false;
@@ -614,6 +631,7 @@ class ShoppPurchaseTax {
 	public $id = false;						// The originating Tax object id
 	public $name = '';						// The name of the Tax
 	public $rate = 0.00;					// Tax rate
+    public $baserate = 0.00;                // Tax rate at base of operations
 	public $amount = 0.00;					// The total amount of taxes
 
 	public function __construct ( OrderAmountTax $Tax ) {

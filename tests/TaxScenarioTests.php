@@ -372,7 +372,7 @@ class TaxTests extends ShoppTestCase {
 		// Cart totals
 		$this->assertEquals('109.08', $this->number($Totals->total('order')), 'Cart order amount:');
 		$this->assertEquals('10.00', $this->number($Totals->total('shipping')), 'Cart shipping amount:');
-		$this->assertEquals('19.16', $this->number($Totals->total('tax')), 'Cart tax amount:');
+		$this->assertEquals('19.00', $this->number($Totals->total('tax')), 'Cart tax amount:');
 		$this->assertEquals('119.08', $this->number($Totals->total('total')), 'Cart total amount:');
 
 		$data = array('country' => 'FJ');
