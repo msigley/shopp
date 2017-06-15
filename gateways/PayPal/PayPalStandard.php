@@ -35,8 +35,8 @@ class ShoppPayPalStandard extends GatewayFramework implements GatewayModule {
 		'US' => 'en_US'
 	);
 
-	const APIURL = 'https://ipnpb.paypal.com/cgi-bin/webscr';
-	const DEVURL = 'https://ipnpb.sandbox.paypal.com/cgi-bin/webscr';
+	const APIURL = 'https://www.paypal.com/cgi-bin/webscr';
+	const DEVURL = 'https://www.sandbox.paypal.com/cgi-bin/webscr';
 	const BUTTON = 'http://www.paypal.com/%s/i/btn/btn_xpressCheckout.gif';
 
 	public function __construct () {
