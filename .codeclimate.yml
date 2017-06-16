@@ -16,7 +16,13 @@ engines:
     enabled: true
     checks:
         Controversial/CamelCaseMethodName:
-            enabled: false
+                enabled: false
+        CleanCode/StaticAccess:
+                enabled: false
+        Naming/ShortVariable:
+                enabled: false
+        Design/ExitExpression:
+                enabled: false
 ratings:
   paths:
   - "**.css"
