@@ -252,7 +252,7 @@ span.lowstock.warning {
 
 /** Inventory Manager **/
 #inventory-manager td.inventory {
-	width: 60px;
+	width: 100px;
 }
 
 #inventory-manager td.inventory input {
