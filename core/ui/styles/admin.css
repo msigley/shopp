@@ -1366,7 +1366,7 @@ div.progress div.gloss {
 	margin: 0 5px;
 }
 
-.shopp .multiple-select ul li.odd {
+.shopp .multiple-select ul li:nth-child(odd) {
 	background: #f9f9f9;
 }
 

@@ -205,10 +205,6 @@ class ShoppScreenOrders extends ShoppScreenController {
 	 **/
 	public function screen () {
 
-		$Orders = $this->orders;
-		$ordercount = $this->ordercount;
-		$num_pages = ceil($ordercount->total / $per_page);
-
 		$Table = $this->table();
 		$Table->prepare_items();
 
@@ -233,7 +229,7 @@ class ShoppScreenOrders extends ShoppScreenController {
 		}
 		ShoppOrder()->Tax->location($taxcountry, $taxstate);
 
-		foreach ( $Purchase->purchased as $index => &$Purchased )
+		foreach ( $Purchase->purchased as &$Purchased )
 			$Cart->additem($Purchased->quantity, new ShoppCartItem($Purchased));
 
 		$Cart->Totals->register( new OrderAmountShipping( array('id' => 'cart', 'amount' => $Purchase->freight ) ) );
@@ -441,7 +437,7 @@ class ShoppOrdersTable extends ShoppAdminTable {
 		if ( 'top' == $which )    $this->top_tablenav();
 	}
 
-	protected function bottom_tablenav () {
+	protected function bottom_tablenav() {
 		if ( ! current_user_can('shopp_financials') || ! current_user_can('shopp_export_orders') ) return;
 
 		$exporturl = add_query_arg(urlencode_deep(array_merge(stripslashes_deep($_GET), array('src' => 'export_purchases'))));
@@ -454,15 +450,10 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			. '		<div id="export-columns" class="multiple-select">'
 			. '			<ul>';
 
-		$even = true;
+		echo '				<li><input type="checkbox" name="selectall_columns" id="selectall_columns" /><label for="selectall_columns"><strong>' . Shopp::__('Select All') . '</strong></label></li>';
 
-		echo '				<li' . ( $even ? '' : ' class="odd"' ) . '><input type="checkbox" name="selectall_columns" id="selectall_columns" /><label for="selectall_columns"><strong>' . Shopp::__('Select All') . '</strong></label></li>';
 
-		$even = ! $even;
-
-		echo '				<li' . ( $even ? '' : ' class="odd"' ) . '><input type="hidden" name="settings[purchaselog_headers]" value="off" /><input type="checkbox" name="settings[purchaselog_headers]" id="purchaselog_headers" value="on" /><label for="purchaselog_headers"><strong>' . Shopp::__('Include column headings') . '</strong></label></li>';
-
-		$even = ! $even;
+		echo '				<li><input type="hidden" name="settings[purchaselog_headers]" value="off" /><input type="checkbox" name="settings[purchaselog_headers]" id="purchaselog_headers" value="on" /><label for="purchaselog_headers"><strong>' . Shopp::__('Include column headings') . '</strong></label></li>';
 
 		$exportcolumns = array_merge(ShoppPurchase::exportcolumns(), ShoppPurchased::exportcolumns());
 		$selected = shopp_setting('purchaselog_columns');
@@ -470,9 +461,7 @@ class ShoppOrdersTable extends ShoppAdminTable {
 
 		foreach ( $exportcolumns as $name => $label ) {
 			if ( 'cb' == $name ) continue;
-			echo '				<li' . ( $even ? '' : ' class="odd"' ) . '><input type="checkbox" name="settings[purchaselog_columns][]" value="' . esc_attr($name) . '" id="column-' . esc_attr($name) . '" ' . ( in_array($name, $selected) ? ' checked="checked"' : '' ) . ' /><label for="column-' . esc_attr($name) . '">' . esc_html($label) . '</label></li>';
-			$even = ! $even;
-
+			echo '				<li><input type="checkbox" name="settings[purchaselog_columns][]" value="' . esc_attr($name) . '" id="column-' . esc_attr($name) . '" ' . ( in_array($name, $selected) ? ' checked="checked"' : '' ) . ' /><label for="column-' . esc_attr($name) . '">' . esc_html($label) . '</label></li>';
 		}
 
 		echo  '			</ul>'
@@ -501,7 +490,7 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			. '</div>';
 	}
 
-	protected function top_tablenav () {
+	protected function top_tablenav() {
 		$range = $this->request('range') ? $this->request('range') : 'all';
 		$ranges = array(
 			'all'         => Shopp::__('Show All Orders'),
@@ -948,13 +937,6 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 		$Purchase->Customer = new ShoppCustomer($Purchase->customer);
 		$Gateway = $Purchase->gateway();
 
-
-
-
-
-
-
-
 		// $targets = shopp_setting('target_markets');
 		// $default = array('' => '&nbsp;');
 		// $Purchase->_countries = array_merge($default, ShoppLookup::countries());
@@ -1015,11 +997,11 @@ class ShoppScreenOrderEntry extends ShoppScreenOrderManager {
 
 		$Purchase = ShoppPurchase();
 
-		ShoppUI::register_column_headers($this->id, apply_filters('shopp_order_manager_columns',array(
-			'items' => __('Items','Shopp'),
-			'qty' => __('Quantity','Shopp'),
-			'price' => __('Price','Shopp'),
-			'total' => __('Total','Shopp')
+		ShoppUI::register_column_headers($this->id, apply_filters('shopp_order_manager_columns', array(
+			'items' => Shopp::__('Items'),
+			'qty'   => Shopp::__('Quantity'),
+			'price' => Shopp::__('Price'),
+			'total' => Shopp::__('Total')
 		)));
 
 		new ShoppAdminOrderContactBox(
@@ -1665,7 +1647,6 @@ class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 	}
 
 	public function updates() {
-
 		if ( 'update-customer' != $this->form('order-action') ) return;
 		if ( ! $updates = $this->form('customer') ) return;
 		if ( ! is_array($updates) ) return;
@@ -1692,8 +1673,9 @@ class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 
 	public function add() {
 		if ( 'new-customer' != $this->form('order-action') ) return;
-		if ( ! $updates = $this->form('customer') ) return;
-		if ( ! is_array($updates) ) return;
+
+		$updates = $this->form('customer');
+		if ( ! ( $updates || is_array($updates) ) ) return;
 
 		extract($this->references, EXTR_SKIP);
 
@@ -1709,26 +1691,27 @@ class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 		$Customer->save();
 
 		if ( ! $Customer->exists() )
-			return $this->notice(Shopp::__('An unknown error occured. The customer could not be created.'), 'error');
+			return $this->notice(Shopp::__('An unknown error occurred. The customer could not be created.'), 'error');
 
 		$Purchase->customer = $Customer->id;
 		$Purchase->copydata($Customer);
 		$Purchase->save();
 
 		// Create a new billing address record for the new customer
-		if ( $billing = $this->form('billing') && is_array($billing) && empty($billing['id']) ) {
+        $billing = $this->form('billing');
+		if ( is_array($billing) && empty($billing['id']) ) {
 			$Billing = new BillingAddress($billing);
 			$Billing->customer = $Customer->id;
 			$Billing->save();
 		}
 
 		// Create a new shipping address record for the new customer
-		if ( $shipping = $this->form('shipping') && is_array($shipping) && empty($shipping['id']) ) {
+        $shipping = $this->form('shipping');
+		if ( is_array($shipping) && empty($shipping['id']) ) {
 			$Shipping = new ShippingAddress($shipping);
 			$Shipping->customer = $Customer->id;
 			$Shipping->save();
 		}
-
 	}
 
 	public function unedit() {
@@ -1758,7 +1741,7 @@ class ShoppAdminOrderBillingAddressBox extends ShoppAdminMetabox {
 		return array('updates');
 	}
 
-	public function updates () {
+	public function updates() {
 		if ( ! $billing = $this->form('billing') ) return;
 		if ( ! is_array($billing) ) return;
 
@@ -1770,7 +1753,7 @@ class ShoppAdminOrderBillingAddressBox extends ShoppAdminMetabox {
 		$this->notice(Shopp::__('Updated billing address.'));
 	}
 
-	public function purchase ( ShoppPurchase $Purchase = null ) {
+	public function purchase( ShoppPurchase $Purchase = null ) {
 		if ( isset($Purchase) )
 			$this->Purchase = $Purchase;
 	}
@@ -1836,11 +1819,11 @@ class ShoppAdminOrderShippingAddressBox extends ShoppAdminOrderBillingAddressBox
 
 	protected $Purchase = false;
 
-	protected function title () {
+	protected function title() {
 		return Shopp::__('Shipping Address');
 	}
 
-	public function updates () {
+	public function updates() {
 
 		if ( ! $shipping = $this->form('shipping') ) return;
 		if ( ! is_array($shipping) ) return;
@@ -1904,7 +1887,7 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 	protected $id = 'order-manage';
 	protected $view = 'orders/manage.php';
 
-	protected function title () {
+	protected function title() {
 		return Shopp::__('Management');
 	}
 
@@ -1938,7 +1921,7 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 		);
 	}
 
-	public function shipnotice () {
+	public function shipnotice() {
 		extract($this->references);
 		if ( ! $shipments = $this->form('shipment') ) return;
 
@@ -2017,7 +2000,7 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 
 	}
 
-	public function cancel () {
+	public function cancel() {
 		if ( 'cancel' != $this->form('order-action') ) return;
 
 		if ( ! current_user_can('shopp_void') )
