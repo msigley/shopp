@@ -905,7 +905,7 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 	 * @param array $options The array of product options
 	 * @return void
 	 **/
-	protected static function keyoptions ( array &$options ) {
+	protected static function keyoptions ( &$options ) {
 		if ( isset($options['v']) || isset($options['a']) ) {
 			$optiontypes = array_keys($options);
 			foreach ( $optiontypes as $type ) {
