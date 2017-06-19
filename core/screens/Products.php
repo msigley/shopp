@@ -13,6 +13,13 @@
 
 defined( 'WPINC' ) || header( 'HTTP/1.1 403' ) & exit; // Prevent direct access
 
+/**
+ * Product admin router
+ * 
+ * Routes requests to the proper screen controller
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProducts extends ShoppAdminPostController {
 
 	protected $ui = 'products';
@@ -29,39 +36,111 @@ class ShoppAdminProducts extends ShoppAdminPostController {
 
 }
 
+/**
+ * Screen controller for the catalog manager
+ *
+ * @since 1.4
+ **/
 class ShoppScreenProducts extends ShoppScreenController {
 
-	public $views = array('published', 'drafts', 'onsale', 'featured', 'bestselling', 'inventory', 'trash');
-	public $view = 'all';
 	public $worklist = array();
 	public $products = array();
-	public $subs = array();
+	public $views = array();
 
 	protected $ui = 'products';
 
 	/**
-	 * Parses admin requests to determine which interface to display
+	 * Registers actions for the catalog products screen
 	 *
-	 * @author Jonathan Davis
-	 * @since 1.1
-	 * @version 1.2
+	 * @version 1.4
 	 *
+	 * @return array The list of actions to handle
+	 **/
+	public function actions () {
+		return array(
+			'bulkaction',
+            'emptytrash',
+			'duplicate'
+		);
+	}
+
+	/**
+	 * Handle bulk actions
+	 *
+	 * Publish, Unpublish,Move to Trash, Feature and De-feature
+	 *
+	 * @version 1.4
 	 * @return void
 	 **/
-	public function admin () {
-		if ( ! empty($_GET['id']) ) {
-			$this->editor();
-		} else {
-			$this->manager();
+	public function bulkaction () {
+		$actions = array('publish', 'unpublish', 'trash', 'restore', 'feature', 'defeature');
 
-			global $Products;
-			if ( 0 == $Products->total ) return;
+		$request = $this->request('action');
+		$selected = (array)$this->request('selected');
+        $selected = array_map('absint', $selected);
 
-			// Save workflow list
-			$this->worklist = $this->loader(true);
-			$this->worklist['query'] = $_GET;
-		}
+		if ( ! in_array($request, $actions) ) return;
+
+		if ( empty($selected) ) return;
+
+		if ( 'publish' == $request )
+			ShoppProduct::publishset($selected, 'publish');
+
+		if ( 'unpublish' == $request )
+			ShoppProduct::publishset($selected, 'draft');
+
+		if ( 'trash' == $request )
+			ShoppProduct::publishset($selected, 'trash');
+        
+        if ( 'restore' == $request ){
+            ShoppProduct::publishset($selected, 'draft');
+        }
+
+		if ( 'feature' == $request )
+			ShoppProduct::featureset($selected, 'on');
+
+		if ( 'defeature' == $request )
+			ShoppProduct::featureset($selected, 'off');
+
+		Shopp::redirect( $this->url(array('action' => null, 'selected' => null)) );
 	}
+
+	/**
+	 * Duplicates a requested product
+	 *
+	 * @version 1.4
+	 * @return void
+	 **/
+	public function duplicate () {
+		$duplicate = $this->request('duplicate');
+		if ( ! $duplicate ) return;
+		if ( ! current_user_can('shopp_products') ) return;
+
+		$Product = new ShoppProduct($duplicate);
+		$Product->duplicate();
+		$this->index($Product);
+
+		Shopp::redirect( $this->url(array('duplicate' => null)) );
+	}
+    
+    /**
+     * Handles emptying products in the trash view
+     *
+     * @since 1.4
+     * @return void
+     **/
+    public function emptytrash () {
+        if ( ! $this->request('delete_all') ) return;
+		
+        $Template = new ShoppProduct();
+		$trash = sDB::query("SELECT ID FROM $Template->_table WHERE post_status='trash' AND post_type='" . ShoppProduct::$posttype . "'", 'array', 'col', 'ID');
+		foreach ( $trash as $id ) {
+			$Product = new ShoppProduct($id);
+            $Product->delete();
+		}
+        
+		Shopp::redirect( $this->url(array('delete_all' => null)) );        
+    }
 
 	/**
 	 * Handles loading, saving and deleting products in the context of workflows
@@ -72,342 +151,167 @@ class ShoppScreenProducts extends ShoppScreenController {
 	 *
 	 * @return void
 	 **/
-	public function workflow () {
-		global $Shopp,$post;
+	// public function workflow () {
+	//	 global $Shopp,$post;
+	//
+	//	 $defaults = array(
+	//		 'page' => false,
+	//		 'action' => false,
+	//		 'selected' => array(),
+	//		 'id' => false,
+	//		 'save' => false,
+	//		 'duplicate' => false,
+	//		 'next' => false
+	//	 );
+	//	 $args = array_merge($defaults, $_REQUEST);
+	//	 extract($args, EXTR_SKIP);
+	//
+	//	 if ( ! is_array($selected) ) $selected = array($selected);
+	//
+	//	 if ( ! defined('WP_ADMIN') || ! isset($page)
+	//		 || $this->Admin->pagename('products') != $page )
+	//			 return false;
+	//
+	//	 $adminurl = admin_url('admin.php');
+	//
+	//	 if ( $this->Admin->pagename('products') == $page && ( false !== $action || isset($_GET['delete_all']) ) ) {
+	//		 if (isset($_GET['delete_all'])) $action = 'emptytrash';
+	//		 switch ($action) {
+	//			 case 'publish':	 ShoppProduct::publishset($selected,'publish'); break;
+	//			 case 'unpublish':	 ShoppProduct::publishset($selected,'draft'); break;
+	//			 case 'feature':	 ShoppProduct::featureset($selected,'on'); break;
+	//			 case 'defeature':	 ShoppProduct::featureset($selected,'off'); break;
+	//			 case 'restore':	 ShoppProduct::publishset($selected,'draft'); break;
+	//			 case 'trash':		 ShoppProduct::publishset($selected,'trash'); break;
+	//			 case 'delete':
+	//				 foreach ($selected as $id) {
+	//					 $P = new ShoppProduct($id); $P->delete();
+	//				 } break;
+	//			 case 'emptytrash':
+	//				 $Template = new ShoppProduct();
+	//				 $trash = sDB::query("SELECT ID FROM $Template->_table WHERE post_status='trash' AND post_type='".ShoppProduct::posttype()."'",'array','col','ID');
+	//				 foreach ($trash as $id) {
+	//					 $P = new ShoppProduct($id); $P->delete();
+	//				 } break;
+	//		 }
+	//		 wp_cache_delete( 'shopp_product_subcounts' );
+	//		 $redirect = add_query_arg( $_GET, $adminurl );
+	//		 $redirect = remove_query_arg( array('action','selected','delete_all'), $redirect );
+	//		 Shopp::redirect( $redirect );
+	//	 }
+	//
+	//	 if ($duplicate) {
+	//		 $Product = new ShoppProduct($duplicate);
+	//		 $Product->duplicate();
+	//		 $this->index($Product);
+	//		 Shopp::redirect( add_query_arg(array('page' => $this->Admin->pagename('products'), 'paged' => $_REQUEST['paged']), $adminurl) );
+	//	 }
+	//
+	//	 if (isset($id) && $id != "new") {
+	//		 $Shopp->Product = new ShoppProduct($id);
+	//		 $Shopp->Product->load_data();
+	//
+	//		 // Adds CPT compatibility support for third-party plugins/themes
+	//		 global $post;
+	//		 if( is_null($post) ) $post = get_post($Shopp->Product->id);
+	//
+	//	 } else $Shopp->Product = new ShoppProduct();
+	//
+	//	 if ($save) {
+	//		 wp_cache_delete('shopp_product_subcounts');
+	//		 $this->save($Shopp->Product);
+	//		 $this->notice( sprintf(__('%s has been saved.','Shopp'),'<strong>'.stripslashes($Shopp->Product->name).'</strong>') );
+	//
+	//		 // Workflow handler
+	//		 if (isset($_REQUEST['settings']) && isset($_REQUEST['settings']['workflow'])) {
+	//			 $workflow = $_REQUEST['settings']['workflow'];
+	//			 $worklist = $this->worklist;
+	//			 $working = array_search($id,$this->worklist);
+	//
+	//			 switch($workflow) {
+	//				 case 'close': $next = 'close'; break;
+	//				 case 'new': $next = 'new'; break;
+	//				 case 'next': $key = $working+1; break;
+	//				 case 'previous': $key = $working-1; break;
+	//				 case 'continue': $next = $id; break;
+	//			 }
+	//
+	//			 if (isset($key)) $next = isset($worklist[$key]) ? $worklist[$key] : 'close';
+	//		 }
+	//
+	//		 if ($next) {
+	//			 $query = $_GET;
+	//			 if ( isset($this->worklist['query']) ) $query = array_merge($_GET, $this->worklist['query']);
+	//			 $redirect = add_query_arg($query,$adminurl);
+	//			 $cleanup = array('action','selected','delete_all');
+	//			 if ('close' == $next) { $cleanup[] = 'id'; $next = false; }
+	//			 $redirect = remove_query_arg($cleanup, $redirect);
+	//			 if ($next) $redirect = add_query_arg('id',$next,$redirect);
+	//			 Shopp::redirect($redirect);
+	//		 }
+	//
+	//		 if (empty($id)) $id = $Shopp->Product->id;
+	//		 $Shopp->Product = new ShoppProduct($id);
+	//		 $Shopp->Product->load_data();
+	//	 }
+	//
+	//	 // WP post type editing support for other plugins
+	//	 if (!empty($Shopp->Product->id))
+	//		 $post = get_post($Shopp->Product->id);
+	//
+	// }
 
-		$defaults = array(
-			'page' => false,
-			'action' => false,
-			'selected' => array(),
-			'id' => false,
-			'save' => false,
-			'duplicate' => false,
-			'next' => false
-		);
-		$args = array_merge($defaults, $_REQUEST);
-		extract($args, EXTR_SKIP);
 
-		if ( ! is_array($selected) ) $selected = array($selected);
-
-		if ( ! defined('WP_ADMIN') || ! isset($page)
-			|| $this->Admin->pagename('products') != $page )
-				return false;
-
-		$adminurl = admin_url('admin.php');
-
-		if ( $this->Admin->pagename('products') == $page && ( false !== $action || isset($_GET['delete_all']) ) ) {
-			if (isset($_GET['delete_all'])) $action = 'emptytrash';
-			switch ($action) {
-				case 'publish': 	ShoppProduct::publishset($selected,'publish'); break;
-				case 'unpublish': 	ShoppProduct::publishset($selected,'draft'); break;
-				case 'feature': 	ShoppProduct::featureset($selected,'on'); break;
-				case 'defeature': 	ShoppProduct::featureset($selected,'off'); break;
-				case 'restore': 	ShoppProduct::publishset($selected,'draft'); break;
-				case 'trash': 		ShoppProduct::publishset($selected,'trash'); break;
-				case 'delete':
-					foreach ($selected as $id) {
-						$P = new ShoppProduct($id); $P->delete();
-					} break;
-				case 'emptytrash':
-					$Template = new ShoppProduct();
-					$trash = sDB::query("SELECT ID FROM $Template->_table WHERE post_status='trash' AND post_type='".ShoppProduct::posttype()."'",'array','col','ID');
-					foreach ($trash as $id) {
-						$P = new ShoppProduct($id); $P->delete();
-					} break;
-			}
-			wp_cache_delete( 'shopp_product_subcounts' );
-			$redirect = add_query_arg( $_GET, $adminurl );
-			$redirect = remove_query_arg( array('action','selected','delete_all'), $redirect );
-			Shopp::redirect( $redirect );
-		}
-
-		if ($duplicate) {
-			$Product = new ShoppProduct($duplicate);
-			$Product->duplicate();
-			$this->index($Product);
-			Shopp::redirect( add_query_arg(array('page' => $this->Admin->pagename('products'), 'paged' => $_REQUEST['paged']), $adminurl) );
-		}
-
-		if (isset($id) && $id != "new") {
-			$Shopp->Product = new ShoppProduct($id);
-			$Shopp->Product->load_data();
-
-			// Adds CPT compatibility support for third-party plugins/themes
-			global $post;
-			if( is_null($post) ) $post = get_post($Shopp->Product->id);
-
-		} else $Shopp->Product = new ShoppProduct();
-
-		if ($save) {
-			wp_cache_delete('shopp_product_subcounts');
-			$this->save($Shopp->Product);
-			$this->notice( sprintf(__('%s has been saved.','Shopp'),'<strong>'.stripslashes($Shopp->Product->name).'</strong>') );
-
-			// Workflow handler
-			if (isset($_REQUEST['settings']) && isset($_REQUEST['settings']['workflow'])) {
-				$workflow = $_REQUEST['settings']['workflow'];
-				$worklist = $this->worklist;
-				$working = array_search($id,$this->worklist);
-
-				switch($workflow) {
-					case 'close': $next = 'close'; break;
-					case 'new': $next = 'new'; break;
-					case 'next': $key = $working+1; break;
-					case 'previous': $key = $working-1; break;
-					case 'continue': $next = $id; break;
-				}
-
-				if (isset($key)) $next = isset($worklist[$key]) ? $worklist[$key] : 'close';
-			}
-
-			if ($next) {
-				$query = $_GET;
-				if ( isset($this->worklist['query']) ) $query = array_merge($_GET, $this->worklist['query']);
-				$redirect = add_query_arg($query,$adminurl);
-				$cleanup = array('action','selected','delete_all');
-				if ('close' == $next) { $cleanup[] = 'id'; $next = false; }
-				$redirect = remove_query_arg($cleanup, $redirect);
-				if ($next) $redirect = add_query_arg('id',$next,$redirect);
-				Shopp::redirect($redirect);
-			}
-
-			if (empty($id)) $id = $Shopp->Product->id;
-			$Shopp->Product = new ShoppProduct($id);
-			$Shopp->Product->load_data();
-		}
-
-		// WP post type editing support for other plugins
-		if (!empty($Shopp->Product->id))
-			$post = get_post($Shopp->Product->id);
-
-	}
-
-	public function loader ( $workflow = false ) {
+	/**
+	 * Loads products for this screen view
+	 * 
+	 * @since 1.4
+	 * @return void
+	 **/
+	public function loader () {
 
 		if ( ! current_user_can('shopp_products') ) return;
 
-		add_screen_option( 'per_page', array( 'label' => __('Products Per Page','Shopp'), 'default' => 20, 'option' => 'edit_' . ShoppProduct::$posttype . '_per_page' ) );
-		$per_page_option = get_current_screen()->get_option( 'per_page' );
+		$View = new ShoppScreenProductsView($this->request('view'));
+		$View->page($this->request('paged'));
 
-		$defaults = array(
-			'cat' => false,
-			'paged' => 1,
-			'per_page' => $per_page_option['default'],
-			's' => '',
-			'sl' => '',
-			'matchcol' => '',
-			'view' => $this->view,
-			'is_inventory' => false,
-			'is_trash' => false,
-			'is_bestselling' => false,
-			'categories_menu' => false,
-			'inventory_menu' => false,
-			'lowstock' => 0,
-			'columns' => '',
-			'orderby' => '',
-			'order' => '',
-			'where' => array(),
-			'joins' => array()
-		);
+		if ( $query = $this->request('s') )
+			$View->search($query);
 
-		$args = array_merge($defaults, $_GET);
-		if ( false !== ( $user_per_page = get_user_option($per_page_option['option']) ) ) $args['per_page'] = $user_per_page;
-		extract($args, EXTR_SKIP);
-
-		$url = $this->url($_GET);
-
-		$subs = array(
-			'all' =>        array('label' => Shopp::__('All'),         'where' => array("p.post_status!='trash'")),
-			'published' =>  array('label' => Shopp::__('Published'),   'where' => array("p.post_status='publish'")),
-			'drafts' =>     array('label' => Shopp::__('Drafts'),      'where' => array("p.post_status='draft'")),
-			'onsale' =>     array('label' => Shopp::__('On Sale'),     'where' => array("s.sale='on' AND p.post_status != 'trash'")),
-			'featured' =>   array('label' => Shopp::__('Featured'),	   'where' => array("s.featured='on' AND p.post_status != 'trash'")),
-			'bestselling'=> array('label' => Shopp::__('Bestselling'), 'where' => array("p.post_status!='trash'", BestsellerProducts::threshold() . " < s.sold"),'order' => 'bestselling'),
-			'inventory' => 	array('label' => Shopp::__('Inventory'),   'where' => array("s.inventory='on' AND p.post_status != 'trash'")),
-			'trash' =>      array('label' => Shopp::__('Trash'),       'where' => array("p.post_status='trash'"))
-		);
-
-		if ( ! shopp_setting_enabled('inventory') ) unset($subs['inventory']);
-
-		switch ( $view ) {
-			case 'inventory':
-				if ( shopp_setting_enabled('inventory') ) $is_inventory = true;
-				else Shopp::redirect(add_query_arg('view', null, $url), true);
-				break;
-			case 'trash': $is_trash = true; break;
-			case 'bestselling': $is_bestselling = true; break;
-		}
-
-		if ( $is_inventory ) $per_page = 50;
-		$pagenum = absint( $paged );
-		$start = ( $per_page * ( $pagenum - 1 ) );
-
-		$where = $subs[ $this->view ]['where'];
-
-		if ( ! empty($s) ) {
-			$SearchResults = new SearchResults(array('search' => $s, 'nostock' => 'on', 'published' => 'off', 'paged' => -1));
-			$SearchResults->load();
-			$ids = array_keys($SearchResults->products);
-			$where[] = "p.ID IN (" . join(',', $ids) . ")";
-		}
-
-		if ( ! empty($cat) ) {
-			global $wpdb;
-			$joins[ $wpdb->term_relationships ] = "INNER JOIN $wpdb->term_relationships AS tr ON (p.ID=tr.object_id)";
-			$joins[ $wpdb->term_taxonomy ] = "INNER JOIN $wpdb->term_taxonomy AS tt ON (tr.term_taxonomy_id=tt.term_taxonomy_id AND tt.term_id=$cat)";
-			if (-1 == $cat) {
-				unset($joins[ $wpdb->term_taxonomy ]);
-				$joins[ $wpdb->term_relationships ] = "LEFT JOIN $wpdb->term_relationships AS tr ON (p.ID=tr.object_id)";
-				$where[] = 'tr.object_id IS NULL';
-			}
-		}
+		if ( $category_id = $this->request('cat') )
+			$View->category($category_id);
 
 		// Detect custom taxonomies
 		$taxonomies = array_intersect(get_object_taxonomies(ShoppProduct::$posttype), array_keys($_GET));
-		if ( ! empty($taxonomies) ) {
-			foreach ($taxonomies as $n => $taxonomy) {
-				global $wpdb;
-				$term = get_term_by('slug', $_GET[ $taxonomy ], $taxonomy);
-				if ( ! empty($term->term_id) ) {
-					$joins[ $wpdb->term_relationships . '_' . $n ] = "INNER JOIN $wpdb->term_relationships AS tr$n ON (p.ID=tr$n.object_id)";
-					$joins[ $wpdb->term_taxonomy . '_' . $n ] = "INNER JOIN $wpdb->term_taxonomy AS tt$n ON (tr$n.term_taxonomy_id=tt$n.term_taxonomy_id AND tt$n.term_id=$term->term_id)";
-				}
-			}
-		}
+		if ( $taxonomies )
+			$View->taxonomies($taxonomies);
 
-		if ( ! empty($sl) && shopp_setting_enabled('inventory') ) {
-			switch( $sl ) {
-				case "ns":
-					foreach ( $where as &$w ) $w = str_replace("s.inventory='on'", "s.inventory='off'", $w);
-					$where[] = "s.inventory='off'";
-					break;
-				case "oos":
-					$where[] = "(s.inventory='on' AND s.stock = 0)";
-					break;
-				case "ls":
-					$ls = shopp_setting('lowstock_level');
-					if ( empty($ls) ) $ls = '0';
-					$where[] = "(s.inventory='on' AND s.lowstock != 'none')";
-					break;
-				case "is": $where[] = "(s.inventory='on' AND s.stock > 0)";
-			}
-		}
+		if ( $stocklevel = $this->request('sl') )
+			$View->stocklevel($stocklevel);
 
-		$lowstock = shopp_setting('lowstock_level');
+		$View->orderby($this->request('orderby'), $this->request('order'));
 
-		// Setup queries
-		$pd = WPDatabaseObject::tablename(ShoppProduct::$table);
-		$pt = ShoppDatabaseObject::tablename(ShoppPrice::$table);
-		$ps = ShoppDatabaseObject::tablename(ProductSummary::$table);
-
-		$orderdirs = array('asc', 'desc');
-		if ( in_array($order, $orderdirs) ) $orderd = strtolower($order);
-		else $orderd = 'asc';
-
-		if ( isset($subs[ $this->view ]['order']) ) $order = $subs[ $this->view ]['order'];
-
-		$ordercols = '';
-		switch ( $orderby ) {
-			case 'name': $order = 'title'; if ('desc' == $orderd) $order = 'reverse'; break;
-			case 'price': $order = 'lowprice'; if ('desc' == $orderd) $order = 'highprice'; break;
-			case 'date': $order = 'newest'; if ('desc' == $orderd) $order = 'oldest'; break;
-
-			case 'sold': $ordercols = 's.sold '.$orderd; break;
-			case 'gross': $ordercols = 's.grossed '.$orderd; break;
-			case 'inventory': $ordercols = 's.stock '.$orderd; break;
-			case 'sku': $ordercols = 'pt.sku '.$orderd; break;
-		}
-
-		if ( in_array($this->view, array('onsale', 'featured', 'inventory')) )
-			$joins[ $ps ] = "INNER JOIN $ps AS s ON p.ID=s.product";
-
-		$loading = array(
-			'where'     => $where,
-			'joins'     => $joins,
-			'limit'     => "$start,$per_page",
-			'load'      => array('categories', 'coverimages'),
-			'published' => false,
-			'order'     => $order,
-			'nostock'   => true,
-			// 'debug'  => true
-		);
-
-		if ( ! empty($ordercols) ) {
-			unset($loading['order']);
-			$loading['orderby'] = $ordercols;
-		}
-
-		if ( $is_inventory ) { // Override for inventory products
-			$where[] = "(pt.context='product' OR pt.context='variation') AND pt.type != 'N/A'";
-			$loading = array(
-				'columns'   => "pt.id AS stockid,IF(pt.context='variation',CONCAT(p.post_title,': ',pt.label),p.post_title) AS post_title,pt.sku AS sku,pt.stock AS stock",
-				'joins'     => array_merge(array($pt => "LEFT JOIN $pt AS pt ON p.ID=pt.product"),$joins),
-				'where'     => $where,
-				'groupby'   => 'pt.id',
-				'orderby'   => str_replace('s.', 'pt.', $ordercols),
-				'limit'     => "$start,$per_page",
-				'nostock'   => true,
-				'published' => false,
-				// 'debug'  => true
-			);
-		}
-
-		// Override loading product meta and limiting by pagination in the workflow list
-		if ( $workflow ) {
-			unset($loading['limit']);
-			$loading['ids'] = true;
-			$loading['pagination'] = false;
-			$loading['load'] = array();
-		};
+		$loading = $View->loading();
 
 		$this->products = new ProductCollection();
 		$this->products->load($loading);
 
-		// Overpagination protection, redirect to page 1 if the requested page doesn't exist
-		$num_pages = ceil($this->products->total / $per_page);
-		if ( $paged > 1 && $paged > $num_pages ) Shopp::redirect( add_query_arg('paged', null, $url ) );
-
 		// Return a list of product keys for workflow list requests
-		if ( $workflow ) return $this->products->worklist();
+		// if ( $workflow )
+		//			 return $this->products->worklist();
 
-		// Get sub-screen counts
-		$subcounts = wp_cache_get('shopp_product_subcounts','shopp_admin');
-		if ( $subcounts ) {
-			foreach ($subcounts as $name => $total)
-				if ( isset($subs[ $name ]) ) $subs[ $name ]['total'] = $total;
-		} else {
-			$subcounts = array();
-			foreach ( $subs as $name => &$subquery ) {
-				$subquery['total'] = 0;
-				$query = array(
-					'columns' => "count(*) AS total",
-					'table' => "$pd as p",
-					'joins' => array(),
-					'where' => array(),
-				);
+		$View->totals(); // Get sub-screen counts
 
-				$query = array_merge($query, $subquery);
-				$query['where'][] = "p.post_type='shopp_product'";
-
-				if ( in_array($name, array('onsale', 'bestselling', 'featured', 'inventory')) )
-					$query['joins'][ $ps ] = "INNER JOIN $ps AS s ON p.ID=s.product";
-
-				$query = sDB::select($query);
-				$subquery['total'] = sDB::query($query, 'auto', 'col', 'total');
-				$subcounts[ $name ] = $subquery['total'];
-			}
-			wp_cache_set('shopp_product_subcounts', $subcounts, 'shopp_admin');
-		}
-
-		$this->subs = $subs;
+		// Keep track of our views
+		$this->views = $View->views;
+		$this->view = $View->view();
 	}
 
 	/**
 	 * Interface processor for the product list manager
 	 *
-	 * @author Jonathan Davis
 	 * @since 1.0
-	 * @version 1.2
+	 * @version 1.4
 	 *
 	 * @param boolean $workflow True to get workflow data
 	 * @return void
@@ -417,104 +321,75 @@ class ShoppScreenProducts extends ShoppScreenController {
 		if ( ! current_user_can('shopp_products') )
 			wp_die(__('You do not have sufficient permissions to access this page.'));
 
-		// Explicitly recall the loader to reload products inside the admin content
+		// Explicitly recall the loader to load products inside the admin content
 		$this->loader();
 
-		$defaults = array(
-			'cat' => false,
-			'paged' => 1,
-			'per_page' => 20,
-			's' => '',
-			'sl' => '',
-			'matchcol' => '',
-			'view' => $this->view,
-			'is_inventory' => false,
-			'is_trash' => false,
-			'is_bestselling' => false,
-			'categories_menu' => false,
-			'inventory_menu' => false,
-			'lowstock' => 0,
-			'columns' => '',
-			'orderby' => '',
-			'order' => '',
-			'where' => array(),
-			'joins' => array()
-		);
-
-		$args = array_merge($defaults,$_GET);
-		$per_page_option = get_current_screen()->get_option( 'per_page' );
-		if ( false !== ( $user_per_page = get_user_option($per_page_option['option']) ) ) $args['per_page'] = $user_per_page;
-		extract($args,EXTR_SKIP);
-
-		$url = $this->url($_GET);
-
-		if ( empty($categories) ) $categories = array('');
-
 		$categories_menu = wp_dropdown_categories(array(
-			'show_option_all' => __('View all categories', 'Shopp'),
-			'show_option_none' => __('Uncategorized', 'Shopp'),
-			'hide_empty' => 0,
-			'hierarchical' => 1,
-			'show_count' => 0,
-			'orderby' => 'name',
-			'selected' => $cat,
-			'echo' => 0,
-			'taxonomy' => 'shopp_category'
+			'show_option_all'  => Shopp::__('View all categories'),
+			'show_option_none' => Shopp::__('Uncategorized'),
+			'hide_empty'	   => 0,
+			'hierarchical'	   => 1,
+			'show_count'	   => 0,
+			'orderby'		   => 'name',
+			'selected'		   => $this->request('cat'),
+			'echo'			   => 0,
+			'taxonomy'		   => 'shopp_category'
 		));
 
-		if ( 'on' == shopp_setting('inventory') ) {
+		if ( shopp_setting_enabled('inventory') ) {
 			$inventory_filters = array(
-				'all' => __('View all products','Shopp'),
-				'is' => __('In stock','Shopp'),
-				'ls' => __('Low stock','Shopp'),
-				'oos' => __('Out-of-stock','Shopp'),
-				'ns' => __('Not stocked','Shopp')
+				'all' => Shopp::__('View all products'),
+				'is'  => Shopp::__('In stock'),
+				'ls'  => Shopp::__('Low stock'),
+				'oos' => Shopp::__('Out-of-stock'),
+				'ns'  => Shopp::__('Not stocked')
 			);
-			$inventory_menu = '<select name="sl">'.Shopp::menuoptions($inventory_filters, $sl, true) . '</select>';
+			$inventory_menu = '<select name="sl">' . Shopp::menuoptions($inventory_filters, $this->request('sl'), true) . '</select>';
 		}
-
-		if ( 'off' == shopp_setting('inventory') ) unset($this->subs['inventory']);
-		switch ($view) {
-			case 'inventory':
-				if ( shopp_setting_enabled('inventory') ) $is_inventory = true;
-				break;
-			case 'trash': $is_trash = true; break;
-			case 'bestselling': $is_bestselling = true; break;
-		}
-
-		if ($is_inventory) $per_page = 50;
-
-		$pagenum = absint( $paged );
-		$start = ($per_page * ($pagenum-1));
 
 		$actions_menu = array(
-			'publish' => __('Publish','Shopp'),
-			'unpublish' => __('Unpublish','Shopp'),
-			'feature' => __('Feature','Shopp'),
-			'defeature' => __('De-feature','Shopp'),
-			'trash' => __('Move to trash','Shopp')
+			'publish'   => Shopp::__('Publish'),
+			'unpublish' => Shopp::__('Unpublish'),
+			'feature'   => Shopp::__('Feature'),
+			'defeature' => Shopp::__('De-feature'),
+			'trash'     => Shopp::__('Move to trash')
 		);
 
-		if ($is_trash) {
+		if ( 'trash' == $this->view ) {
 			$actions_menu = array(
-				'restore' => __('Restore','Shopp'),
-				'delete' => __('Delete permanently','Shopp')
+				'restore' => Shopp::__('Restore'),
+				'delete'  => Shopp::__('Delete permanently')
 			);
 		}
 
-		global $Products;
-		$Products = $this->products;
-		$num_pages = ceil($Products->total / $per_page);
-		$ListTable = ShoppUI::table_set_pagination ($this->id, $Products->total, $num_pages, $per_page );
+		// Setup URL for this page
+		$url = add_query_arg(
+			array_merge($this->request(), array('page' => $this->pagename) ),
+			admin_url('admin.php')
+		);
 
-		$subs = $this->subs;
+		// Get user defined pagination preferences
+		$per_page_option = get_current_screen()->get_option( 'per_page' );
+		$per_page = $per_page_option['default'];
+		if ( false !== ( $user_per_page = get_user_option($per_page_option['option']) ) )
+			$per_page = $user_per_page;
 
-		switch ($view) {
-			case 'inventory': if (shopp_setting_enabled('inventory')) $ui = 'inventory.php'; break;
-			default: $ui = 'products.php'; break;
+
+		// Setup UI
+		$views = $this->views;
+		$view = $this->view;
+
+		$ui = 'products.php';
+		if ( 'inventory' == $view ) {
+			$ui = 'inventory.php';
+			$per_page = 50;
 		}
 
-		include(SHOPP_ADMIN_PATH . '/products/' . $ui);
+		// Setup pagination for the list table
+		$num_pages = ceil($this->products->total / $per_page);
+		$ListTable = ShoppUI::table_set_pagination($this->id, $this->products->total, $num_pages, $per_page );
+
+		include $this->ui($ui, array($categories_menu, $inventory_menu, $actions_menu, $url, $views, $view, $ListTable));
 	}
 
 	/**
@@ -527,46 +402,49 @@ class ShoppScreenProducts extends ShoppScreenController {
 
 		$headings = array(
 			'default' => array(
-				'cb'=>'<input type="checkbox" />',
-				'name'=>__('Name','Shopp'),
-				'category'=>__('Category','Shopp'),
-				'price'=>__('Price','Shopp'),
-				'inventory'=>__('Inventory','Shopp'),
-				'featured'=>__('Featured','Shopp'),
-				'date'=>__('Date','Shopp')
+				'cb'        => '<input type="checkbox" />',
+				'name'      => Shopp::__('Name'),
+				'category'  => Shopp::__('Category'),
+				'price'     => Shopp::__('Price'),
+				'inventory' => Shopp::__('Inventory'),
+				'featured'  => Shopp::__('Featured'),
+				'date'      => Shopp::__('Date')
 			),
 			'inventory' => array(
-				'inventory'=>__('Inventory','Shopp'),
-				'sku'=>__('SKU','Shopp'),
-				'name'=>__('Name','Shopp')
+				'inventory' => Shopp::__('Inventory'),
+				'sku'       => Shopp::__('SKU'),
+				'name'      => Shopp::__('Name')
 			),
 			'bestselling' => array(
-				'cb'=>'<input type="checkbox" />',
-				'name'=>__('Name','Shopp'),
-				'sold'=>__('Sold','Shopp'),
-				'gross'=>__('Sales','Shopp'),
-				'price'=>__('Price','Shopp'),
-				'inventory'=>__('Inventory','Shopp'),
-				'featured'=>__('Featured','Shopp'),
-				'date'=>__('Date','Shopp')
+				'cb'        => '<input type="checkbox" />',
+				'name'      => Shopp::__('Name'),
+				'sold'      => Shopp::__('Sold'),
+				'gross'     => Shopp::__('Sales'),
+				'price'     => Shopp::__('Price'),
+				'inventory' => Shopp::__('Inventory'),
+				'featured'  => Shopp::__('Featured'),
+				'date'      => Shopp::__('Date')
 			)
 		);
 
-		$columns = isset($headings[$this->view]) ? $headings[$this->view] : $headings['default'];
+		$columns = isset($headings[ $this->request('view') ]) ? $headings[ $this->request('view') ] : $headings['default'];
+
+		add_screen_option( 'per_page', array(
+			'label' => Shopp::__('Products Per Page'),
+			'default' => 20,
+			'option' => 'edit_' . ShoppProduct::$posttype . '_per_page'
+		));
 
 		// Remove inventory column if inventory tracking is disabled
-		if ( ! shopp_setting_enabled('inventory') ) unset($columns['inventory']);
+		if ( ! shopp_setting_enabled('inventory') ) 
+            unset($columns['inventory']);
 
 		// Remove category column from the "trash" view
-		if ('trash' == $this->view) unset($columns['category']);
+		if ( 'trash' == $this->view ) 
+            unset($columns['category']);
 
-		ShoppUI::register_column_headers('toplevel_page_shopp-products', apply_filters('shopp_manage_product_columns',$columns));
+		ShoppUI::register_column_headers('toplevel_page_shopp-products', apply_filters('shopp_manage_product_columns', $columns));
 	}
-
-
-
-
-
 
 	/**
 	 * Loads all categories for the product list manager category filter menu
@@ -605,8 +483,355 @@ class ShoppScreenProducts extends ShoppScreenController {
 
 }
 
+/**
+ * Screen view controller for sub-views
+ *
+ * @since 1.4
+ **/
+class ShoppScreenProductsView {
+
+	public $views = array();
+
+	protected $view = 'all';
+
+	protected $where = array();
+	protected $joins = array();
+	protected $limit = false;
+	protected $load = array('categories', 'coverimages');
+	protected $order = false;
+	protected $orderby = false;
+	protected $nostock = true;
+	protected $debug = false;
+
+    /**
+     * Constructor
+     * 
+     * Define available views for this screen and set the initial view
+     * 
+     * @param string $view The initial view
+     **/
+	public function __construct ( $view = 'all' ) {
+
+		$pricetable = ShoppDatabaseObject::tablename(ShoppPrice::$table);
+
+		$views = array(
+			'all' => array(
+				'label' => Shopp::__('All'),
+				'where' => array("p.post_status!='trash'")
+			),
+
+			'published' => array(
+				'label' => Shopp::__('Published'),
+				'where' => array("p.post_status='publish'")
+			),
+
+			'drafts' => array(
+				'label' => Shopp::__('Drafts'),
+				'where' => array("p.post_status='draft'")
+			),
+
+			'onsale' => array(
+				'label' => Shopp::__('On Sale'),
+				'where' => array("s.sale='on' AND p.post_status != 'trash'")
+			),
+
+			'featured' => array(
+				'label' => Shopp::__('Featured'),
+				'where' => array("s.featured='on' AND p.post_status != 'trash'")
+			),
+
+			'bestselling' => array(
+				'label' => Shopp::__('Bestselling'),
+				'where' => array("p.post_status!='trash'", BestsellerProducts::threshold() . " < s.sold"),
+				'order' => 'bestselling'
+			),
+
+			'inventory' => array(
+				'label'   => Shopp::__('Inventory'),
+				'columns' => "pt.id AS stockid,IF(pt.context='variation',CONCAT(p.post_title,': ',pt.label),p.post_title) AS post_title,pt.sku AS sku,pt.stock AS stock",
+				'joins'   => array($pricetable => "LEFT JOIN $pricetable AS pt ON p.ID=pt.product"),
+				'where'   => array("s.inventory='on' AND p.post_status != 'trash'"),
+				'groupby' => 'pt.id',
+			),
+
+			'trash' => array(
+				'label' => Shopp::__('Trash'),
+				'where' => array("p.post_status='trash'")
+			)
+		);
+
+		// Remove the inventory view when the inventory setting is disabled
+		if ( ! shopp_setting_enabled('inventory') )
+			unset($views['inventory']);
+
+		$this->views = apply_filters('shopp_products_views', $views);
+
+		if ( ! $view )
+			$view = 'all';
+
+		$this->view($view);
+	}
+
+    /**
+     * Get or set the current view
+     *
+     * @since 1.4
+     * 
+     * @param string $view The view slug to set
+     * @return string The current view slug
+     **/
+	public function view ( $view = false ) {
+		if ( false === $view )
+			return $this->view;
+
+		if ( ! isset($this->views[ $view ]) )
+			$view = 'all';
+
+		$this->view = $view;
+
+		$view = $this->views[ $view ];
+		foreach ( $view as $property => $value )
+			$this->$property = $value;
+
+		return $this->view;
+	}
+    
+    /**
+     * Set the current view page limit parameter
+     *
+     * @since 1.4
+     * 
+     * @param int $page The page number to set
+     * @return void
+     **/
+	public function page ( $page = 1 ) {
+		if ( ! $page ) $page = 1;
+
+		$this->page = absint($page);
+
+		$per_page_option = get_current_screen()->get_option( 'per_page' );
+		$perpage = absint($per_page_option['default']);
+		if ( false !== ( $user_perpage = get_user_option($per_page_option['option']) ) )
+			$perpage = absint($user_perpage);
+
+		$start = $perpage * ( $this->page - 1 );
+		$this->limit = "$start,$perpage";
+	}
+
+    /**
+     * Set where clause additions for a product search query
+     *
+     * @since 1.4
+     * @param string $query The product search query
+     * @return void
+     **/
+	public function search ( $query ) {
+		$SearchResults = new SearchResults(array('search' => $query, 'nostock' => 'on', 'published' => 'off', 'paged' => -1));
+		$SearchResults->load();
+		$ids = array_keys($SearchResults->products);
+		$this->where[] = "p.ID IN (" . join(',', $ids) . ")";
+	}
+
+    /**
+     * Set the category filter query parameters
+     *
+     * @since 1.4
+     * @param int $id The category term id
+     * @return void
+     **/
+	public function category ( $id ) {
+		global $wpdb;
+		$this->joins[ $wpdb->term_relationships ] = "INNER JOIN $wpdb->term_relationships AS tr ON (p.ID=tr.object_id)";
+
+		if ( $id > 0 )
+			$this->joins[ $wpdb->term_taxonomy ] = "INNER JOIN $wpdb->term_taxonomy AS tt ON (tr.term_taxonomy_id=tt.term_taxonomy_id AND tt.term_id=$id)";
+
+		if ( -1 == $id ) {
+			unset($this->joins[ $wpdb->term_taxonomy ]);
+			$this->joins[ $wpdb->term_relationships ] = "LEFT JOIN $wpdb->term_relationships AS tr ON (p.ID=tr.object_id)";
+			$this->where[] = 'tr.object_id IS NULL';
+		}
+	}
+
+    /**
+     * Set query parameters for custom taxonomy filters
+     *
+     * @since 1.4
+     * @param array $list The list of custom taxonomy names and taxonomy term
+     * @return void
+     **/
+	public function taxonomies ( array $list ) {
+        global $wpdb;
+		foreach ( $list as $n => $taxonomy ) {
+			global $wpdb;
+			$term = get_term_by('slug', $_GET[ $taxonomy ], $taxonomy);
+			if ( ! empty($term->term_id) ) {
+				$this->joins[ $wpdb->term_relationships . '_' . $n ] = "INNER JOIN $wpdb->term_relationships AS tr$n ON (p.ID=tr$n.object_id)";
+				$this->joins[ $wpdb->term_taxonomy . '_' . $n ] = "INNER JOIN $wpdb->term_taxonomy AS tt$n ON (tr$n.term_taxonomy_id=tt$n.term_taxonomy_id AND tt$n.term_id=$term->term_id)";
+			}
+		}
+	}
+
+    /**
+     * Set the query parameter for stock level filters
+     *
+     * @since 1.4
+     * @param string $level The stock level filter
+     * @return void
+     **/
+	public function stocklevel ( $level ) {
+		switch( $level ) {
+			case "ns":  // No stock
+				foreach ( $this->where as &$w )
+					$w = str_replace("s.inventory='on'", "s.inventory='off'", $w);
+				$this->where[] = "s.inventory='off'";
+				break;
+			case "oos": // Out-of-stock
+				$this->where[] = "(s.inventory='on' AND s.stock = 0)";
+				break;
+			case "ls": // Low stock
+				$ls = shopp_setting('lowstock_level');
+				if ( empty($ls) )
+					$ls = '0';
+				$this->where[] = "(s.inventory='on' AND s.lowstock != 'none')";
+				break;
+			case "is":
+				$this->where[] = "(s.inventory='on' AND s.stock > 0)";
+		}
+	}
+
+    /**
+     * Set the query parameter for column ordering
+     *
+     * @since 1.4
+     * @param string $column The column name
+     * @param string $order The order direction ('asc' or 'desc')
+     * @return void
+     **/
+	public function orderby ( $column, $order = 'asc' ) {
+
+		$column = strtolower($column);
+		$order = strtolower($order);
+
+		if ( in_array($order, array('asc', 'desc')) )
+			$direction = $order;
+
+		if ( isset($this->views[ $this->view ]['order']) )
+			$this->order = $this->views[ $this->view ]['order'];
+
+		$columns = array(
+			'name' => array('asc' => 'title', 'desc' => 'reverse'),
+			'price' => array('asc' => 'lowprice', 'desc' => 'highprice'),
+			'date' => array('asc' => 'newest', 'desc' => 'oldest'),
+		);
+
+		if ( isset($columns[ $column ][ $direction ]) ) {
+			$this->order = $columns[ $column ][ $direction ];
+			return;
+		}
+
+		switch ( $column ) {
+			case 'sold': $this->orderby = "s.sold $direction"; break;
+			case 'gross': $this->orderby = "s.grossed $direction"; break;
+			case 'inventory': $this->orderby = "s.stock $direction"; break;
+			case 'sku': $this->orderby = "pt.sku $direction"; break;
+		}
+
+		if ( 'inventory' == $this->view )
+			$this->orderby = str_replace('s.', 'pt.', $this->orderby);
+	}
+
+    /**
+     * Produces the ShoppProduct query loading parameters
+     *
+     * @since 1.4
+     * @return array The loading parameters
+     **/
+	public function loading () {
+
+		$summarytable = ShoppDatabaseObject::tablename(ProductSummary::$table);
+		if ( in_array($this->view, array('onsale', 'featured', 'inventory')) )
+			$this->joins[ $summarytable ] = "INNER JOIN $summarytable AS s ON p.ID=s.product";
+
+		$loading = array(
+			'where'		=> $this->where,
+			'joins'		=> $this->joins,
+			'limit'		=> $this->limit,
+			'load'		=> $this->load,
+			'published' => $this->published,
+			'nostock'   => $this->nostock,
+			'debug'	 => $this->debug
+		);
+
+		if ( ! empty($this->order) )
+			$loading['order'] = $this->order;
+
+		if ( ! empty($this->orderby) )
+			$loading['orderby'] = $this->orderby;
+
+		return $loading;
+	}
+
+    /**
+     * Calculates cached sub-view product totals based on the view queries
+     *
+     * @since 1.4
+     * @return void
+     **/
+	public function totals () {
+
+		// Get sub-screen counts
+		$subcounts = wp_cache_get('shopp_product_subcounts', 'shopp_admin');
+
+		if ( $subcounts ) {
+			foreach ($subcounts as $name => $total)
+				if ( isset($this->views[ $name ]) ) $this->views[ $name ]['total'] = $total;
+			return;
+		}
+
+		// Setup queries
+		$products = WPDatabaseObject::tablename(ShoppProduct::$table);
+		$summary = ShoppDatabaseObject::tablename(ProductSummary::$table);
+
+		$subcounts = array();
+		foreach ( $this->views as $name => &$subquery ) {
+			$subquery['total'] = 0;
+			$query = array(
+				'columns' => "count(*) AS total",
+				'table' => "$products as p",
+				'joins' => array(),
+				'where' => array(),
+			);
+
+			$query = array_merge($query, $subquery);
+			$query['where'][] = "p.post_type='shopp_product'";
+
+			if ( in_array($name, array('onsale', 'bestselling', 'featured', 'inventory')) )
+				$query['joins'][ $summary ] = "INNER JOIN $summary AS s ON p.ID=s.product";
+
+			$query = sDB::select($query);
+			$subquery['total'] = sDB::query($query, 'auto', 'col', 'total');
+			$subcounts[ $name ] = $subquery['total'];
+		}
+		wp_cache_set('shopp_product_subcounts', $subcounts, 'shopp_admin');
+
+	}
+
+}
+
+/**
+ * Screen controller for the product editor
+ *
+ * @since 1.4
+ **/
 class ShoppScreenProductEditor extends ShoppScreenController {
 
+    /**
+     * Load the requested product for the editor
+     *
+     * @since 1.4
+     * @return ShoppProduct The loaded product based on the request
+     **/
 	public function load () {
 		$id = $this->request('id');
 		$Product = new ShoppProduct($id);
@@ -615,9 +840,8 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 	}
 
 	/**
-	 * Interface processor for the product editor
+	 * Setup the screen UI for the product editor
 	 *
-	 * @author Jonathan Davis
 	 * @return void
 	 **/
 	public function screen () {
@@ -634,16 +858,14 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 		$Product->slug = apply_filters('editable_slug', $Product->slug);
 		$permalink = trailingslashit(Shopp::url());
 
-		$Price = new ShoppPrice();
-
-		$priceTypes = ShoppPrice::types();
-		$billPeriods = ShoppPrice::periods();
+		$pricetypes = ShoppPrice::types();
+		$billperiods = ShoppPrice::periods();
 
 		$workflows = array(
 			'continue' => Shopp::__('Continue Editing'),
-			'close' =>    Shopp::__('Products Manager'),
-			'new' =>      Shopp::__('New Product'),
-			'next' =>     Shopp::__('Edit Next'),
+			'close'    => Shopp::__('Products Manager'),
+			'new'      => Shopp::__('New Product'),
+			'next'     => Shopp::__('Edit Next'),
 			'previous' => Shopp::__('Edit Previous')
 		);
 
@@ -665,24 +887,11 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 		$uploader = shopp_setting('uploader_pref');
 		if ( ! $uploader ) $uploader = 'flash';
 
-		$process = empty($Product->id) ? 'new' : $Product->id;
-		$_POST['action'] = add_query_arg(array_merge($_GET, array('page' => ShoppAdmin::pagename('products'))), admin_url('admin.php'));
+		//$_POST['action'] = add_query_arg(array_merge($_GET, array('page' => ShoppAdmin::pagename('products'))), admin_url('admin.php'));
 		$post_type = ShoppProduct::posttype();
 
 		// Re-index menu options to maintain order in JS #2930
-		if ( isset($Product->options['v']) || isset($Product->options['a']) ) {
-			$options = array_keys($Product->options);
-			foreach ( $options as $type ) {
-				foreach( $Product->options[ $type ] as $id => $menu ) {
-					$Product->options[ $type ][ $type . $id ] = $menu;
-					$Product->options[ $type ][ $type . $id ]['options'] = array_values($menu['options']);
-					unset($Product->options[ $type ][ $id ]);
-				}
-			}
-		} else {
-			foreach ( $Product->options as &$menu )
-				$menu['options'] = array_values($menu['options']);
-		}
+		self::keyoptions($Product->options);
 
 		do_action('add_meta_boxes', ShoppProduct::$posttype, $Product);
 		do_action('add_meta_boxes_' . ShoppProduct::$posttype, $Product);
@@ -691,7 +900,30 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 		do_action('do_meta_boxes', ShoppProduct::$posttype, 'advanced', $Product);
 		do_action('do_meta_boxes', ShoppProduct::$posttype, 'side', $Product);
 
-		include $this->ui('editor.php');
+		include $this->ui('editor.php', array($post_type, $workflows, $permalink, $pricetypes, $billperiods));
+	}
+
+	/**
+	 * Re-key product options to maintain order in JS @see #2930
+	 * 
+	 * @since 1.4
+	 * @param array $options The array of product options
+	 * @return void
+	 **/
+	protected static function keyoptions ( &$options ) {
+		if ( isset($options['v']) || isset($options['a']) ) {
+			$optiontypes = array_keys($options);
+			foreach ( $optiontypes as $type ) {
+				foreach( $options[ $type ] as $id => $menu ) {
+					$options[ $type ][ $type . $id ] = $menu;
+					$options[ $type ][ $type . $id ]['options'] = array_values($menu['options']);
+					unset($options[ $type ][ $id ]);
+				}
+			}
+		} else {
+			foreach ( $options as &$menu )
+				$menu['options'] = array_values($menu['options']);
+		}
 	}
 
 	/**
@@ -704,7 +936,7 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 	 * @author Jonathan Davis
 	 * @since 1.0
 	 *
-	 * @param Product $Product
+	 * @param ShoppProduct $Product
 	 * @return void
 	 **/
 	public function save ( ShoppProduct $Product ) {
@@ -833,7 +1065,7 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 					$tmpfile = sanitize_path($priceline['downloadpath']);
 
 					$File->storage = false;
-					$Engine = $File->engine(); // Set engine from storage settings
+					$File->engine(); // Set engine from storage settings
 
 					$File->parent = $Price->id;
 					$File->context = "price";
@@ -960,114 +1192,119 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 	 *
 	 * Handles processing a file upload from a temporary file to a
 	 * the correct storage container (DB, file system, etc)
-	 *
-	 * @author Jonathan Davis
-	 * @return string JSON encoded result with DB id, filename, type & size
 	 **/
 	public static function downloads () {
+        
+		$json_error = array('errors' => false);
+		$error_contact = ' ' . ShoppLookup::errors('contact', 'server-manager');
+        
+		if ( isset($_FILES['Filedata']['error']) )
+			$json_error['errors'] = ShoppLookup::errors('uploads', $_FILES['Filedata']['error']);
+		elseif ( ! is_uploaded_file($_FILES['Filedata']['tmp_name']) )
+			$json_error['errors'] = Shopp::__('The file could not be saved because the upload was not found on the server.') . $error_contact;
+		elseif ( ! is_readable($_FILES['Filedata']['tmp_name']) )
+			$json_error['errors'] = Shopp::__('The file could not be saved because the web server does not have permission to read the upload.') . $error_contact;
+		elseif ( $_FILES['Filedata']['size'] == 0 )
+			$json_error['errors'] = Shopp::__('The file could not be saved because the uploaded file is empty.') . $error_contact;
 
-		$error = false;
-		if ( isset($_FILES['Filedata']['error']) ) $error = $_FILES['Filedata']['error'];
-		if ( $error ) die( json_encode(array("error" => Lookup::errors('uploads', $error))) );
+		if ( $json_error['errors'] )
+			wp_die( json_encode($json_error) );
 
-		if (!is_uploaded_file($_FILES['Filedata']['tmp_name']))
-			die(json_encode(array("error" => __('The file could not be saved because the upload was not found on the server.','Shopp'))));
-
-		if (!is_readable($_FILES['Filedata']['tmp_name']))
-			die(json_encode(array("error" => __('The file could not be saved because the web server does not have permission to read the upload.','Shopp'))));
-
-		if ($_FILES['Filedata']['size'] == 0)
-			die(json_encode(array("error" => __('The file could not be saved because the uploaded file is empty.','Shopp'))));
-
-		FileAsset::mimetypes();
+		list(/* extension */, $mimetype, $properfile) = wp_check_filetype_and_ext($_FILES['Filedata']['tmp_name'], $File->name);
 
 		// Save the uploaded file
 		$File = new ProductDownload();
 		$File->parent = 0;
 		$File->context = "price";
 		$File->type = "download";
-		$File->name = $_FILES['Filedata']['name'];
-		$File->filename = $File->name;
-
-		list($extension, $mimetype, $properfile) = wp_check_filetype_and_ext($_FILES['Filedata']['tmp_name'],$File->name);
-		if ( empty($mimetype) ) $mimetype = 'application/octet-stream';
-		$File->mime = $mimetype;
-
-		if ( ! empty($properfile))
-			$File->name = $File->filename = $properfile;
+        
+        $File->mime = empty($mimetype) ? 'application/octet-stream' : $mimetype;
+		$File->name = $File->filename = empty($properfile) ? $_FILES['Filedata']['name'] : $properfile;
 
 		$File->size = filesize($_FILES['Filedata']['tmp_name']);
 		$File->store($_FILES['Filedata']['tmp_name'],'upload');
 
 		$Error = ShoppErrors()->code('storage_engine_save');
-		if (!empty($Error)) die( json_encode( array('error' => $Error->message(true)) ) );
+		if ( ! empty($Error) )
+			wp_die( json_encode( array('error' => $Error->message(true)) ) );
 
 		$File->save();
 
-		do_action('add_product_download', $File,$_FILES['Filedata']);
+		do_action('add_product_download', $File, $_FILES['Filedata']);
 
 		echo json_encode(array('id' => $File->id, 'name' => stripslashes($File->name), 'type' => $File->mime, 'size' => $File->size));
 	}
 
 	/**
 	 * AJAX behavior to process uploaded images
-	 *
-	 * @author Jonathan Davis
-	 * @return string JSON encoded result with thumbnail id and src
 	 **/
 	public static function images () {
-		$context = false;
 
-		$error = false;
-		if (isset($_FILES['Filedata']['error'])) $error = $_FILES['Filedata']['error'];
-		if ( $error ) die( json_encode(array("error" => Lookup::errors('uploads', $error))) );
+		$json_error = array('errors' => false);
+		$error_contact = ' ' . ShoppLookup::errors('contact', 'server-manager');
+        
+        $ImageClass = false;
+        
+		$contexts = array(
+            'product' => 'ProductImage', 
+            'category' => 'CategoryImage'
+        );
+        
+		$parent = $_REQUEST['parent'];
+        $type = strtolower($_REQUEST['type']);
 
-		$valid_contexts = array('product','category');
+		if ( isset($contexts[ $type ]) )
+            $ImageClass = $contexts[ $type ];
+        
+		if ( isset($_FILES['Filedata']['error']) )
+			$json_error['errors'] = ShoppLookup::errors('uploads', $_FILES['Filedata']['error']);
+		elseif ( ! $ImageClass )
+            $json_error['errors'] = Shopp::__('The file could not be saved because the server cannot tell whether to attach the asset to a product or a category.');
+        elseif ( ! is_uploaded_file($_FILES['Filedata']['tmp_name']) )
+			$json_error['errors'] = Shopp::__('The file could not be saved because the upload was not found on the server.') . $error_contact;
+		elseif ( ! is_readable($_FILES['Filedata']['tmp_name']) )
+			$json_error['errors'] = Shopp::__('The file could not be saved because the web server does not have permission to read the upload from the server\'s temporary directory.');
+		elseif ( $_FILES['Filedata']['size'] == 0 )
+			$json_error['errors'] = Shopp::__('The file could not be saved because the uploaded file is empty.');
 
-		if (isset($_REQUEST['type']) && in_array(strtolower($_REQUEST['type']),$valid_contexts) ) {
-			$parent = $_REQUEST['parent'];
-			$context = strtolower($_REQUEST['type']);
-		}
-
-		if (!$context)
-			die(json_encode(array("error" => __('The file could not be saved because the server cannot tell whether to attach the asset to a product or a category.','Shopp'))));
-
-		if (!is_uploaded_file($_FILES['Filedata']['tmp_name']))
-			die(json_encode(array("error" => __('The file could not be saved because the upload was not found on the server.','Shopp'))));
-
-		if (!is_readable($_FILES['Filedata']['tmp_name']))
-			die(json_encode(array("error" => __('The file could not be saved because the web server does not have permission to read the upload from the server\'s temporary directory.','Shopp'))));
-
-		if ($_FILES['Filedata']['size'] == 0)
-			die(json_encode(array("error" => __('The file could not be saved because the uploaded file is empty.','Shopp'))));
+		if ( $json_error['errors'] )
+			wp_die( json_encode($json_error) );
 
 		// Save the source image
-		if ($context == "category") $Image = new CategoryImage();
-		else $Image = new ProductImage();
-
+        $Image = new $ImageClass();
 		$Image->parent = $parent;
 		$Image->type = "image";
 		$Image->name = "original";
 		$Image->filename = $_FILES['Filedata']['name'];
+
 		list($Image->width, $Image->height, $Image->mime, $Image->attr) = getimagesize($_FILES['Filedata']['tmp_name']);
 		$Image->mime = image_type_to_mime_type($Image->mime);
 		$Image->size = filesize($_FILES['Filedata']['tmp_name']);
 
-		if ( ! $Image->unique() ) die(json_encode(array("error" => __('The image already exists, but a new filename could not be generated.','Shopp'))));
-
-		$Image->store($_FILES['Filedata']['tmp_name'],'upload');
+		if ( ! $Image->unique() ) {
+			$json_error['errors'] = Shopp::__('The image already exists, but a new filename could not be generated.');
+            wp_die(json_encode($json_error));
+        }
+        
+		$Image->store($_FILES['Filedata']['tmp_name'], 'upload');
 		$Error = ShoppErrors()->code('storage_engine_save');
-		if (!empty($Error)) die( json_encode( array('error' => $Error->message(true)) ) );
+		if ( ! empty($Error) )
+            wp_die( json_encode( array('error' => $Error->message(true)) ) );
 
 		$Image->save();
 
-		if (empty($Image->id))
-			die(json_encode(array("error" => __('The image reference was not saved to the database.','Shopp'))));
+		if ( empty($Image->id) )
+			wp_die(json_encode(array("error" => Shopp::__('The image reference was not saved to the database.'))));
 
-		echo json_encode(array("id"=>$Image->id));
-		exit;
+		wp_die(json_encode(array("id" => $Image->id)));
 	}
 
+    /**
+     * Enqueue scripts and style dependencies
+     *
+     * @since 1.2
+     * @return void
+     **/
 	public function assets () {
 		wp_enqueue_script('jquery-ui-draggable');
 		wp_enqueue_script('postbox');
@@ -1109,24 +1346,24 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 		$Product = $this->Model;
 		$Product->load_data();
 
-		new ShoppAdminProductSaveBox($this, 'side', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::posttype()));
+		new ShoppAdminProductSaveBox($this, 'side', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::$posttype));
 
 		// Load all Shopp product taxonomies
-		foreach ( get_object_taxonomies(ShoppProduct::posttype()) as $taxonomy_name ) {
+		foreach ( get_object_taxonomies(ShoppProduct::$posttype) as $taxonomy_name ) {
 			$taxonomy = get_taxonomy($taxonomy_name);
 			$label = $taxonomy->labels->name;
 
 			if ( is_taxonomy_hierarchical($taxonomy_name) )
-				new ShoppAdminProductCategoriesBox(ShoppProduct::posttype(), 'side', 'core', array( 'Product' => $Product, 'taxonomy' => $taxonomy_name, 'label' => $label ));
-			else new ShoppAdminProductTaggingBox(ShoppProduct::posttype(), 'side', 'core', array( 'Product' => $Product, 'taxonomy' => $taxonomy_name, 'label' => $label ));
+				new ShoppAdminProductCategoriesBox(ShoppProduct::$posttype, 'side', 'core', array( 'Product' => $Product, 'taxonomy' => $taxonomy_name, 'label' => $label ));
+			else new ShoppAdminProductTaggingBox(ShoppProduct::$posttype, 'side', 'core', array( 'Product' => $Product, 'taxonomy' => $taxonomy_name, 'label' => $label ));
 
 		}
 
-		new ShoppAdminProductSettingsBox($this, 'side', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::posttype()));
-		new ShoppAdminProductSummaryBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::posttype()));
-		new ShoppAdminProductDetailsBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::posttype()));
-		new ShoppAdminProductImagesBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::posttype()));
-		new ShoppAdminProductPricingBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::posttype()));
+		new ShoppAdminProductSettingsBox($this, 'side', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::$posttype));
+		new ShoppAdminProductSummaryBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::$posttype));
+		new ShoppAdminProductDetailsBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::$posttype));
+		new ShoppAdminProductImagesBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::$posttype));
+		new ShoppAdminProductPricingBox($this, 'normal', 'core', array('Product' => $Product, 'posttype' => ShoppProduct::$posttype));
 
 	}
 
@@ -1134,6 +1371,11 @@ class ShoppScreenProductEditor extends ShoppScreenController {
 
 } // class ShoppScreenProductEditor
 
+/**
+ * Product editor save meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductSaveBox extends ShoppAdminMetabox {
 
 	protected $id = 'product-save';
@@ -1145,6 +1387,11 @@ class ShoppAdminProductSaveBox extends ShoppAdminMetabox {
 
 }
 
+/**
+ * Product editor taxonomy meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminTaxonomyMetabox extends ShoppAdminMetabox {
 
 	protected $id = '-taxonomy-box';
@@ -1168,11 +1415,16 @@ class ShoppAdminTaxonomyMetabox extends ShoppAdminMetabox {
 
 }
 
+/**
+ * Product editor categories meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductCategoriesBox extends ShoppAdminTaxonomyMetabox {
 
 	protected $view = 'products/categories.php';
 
-	public static function popular_terms_checklist ( $post_ID, $taxonomy, $default = 0, $number = 10, $echo = true ) {
+	public static function popular_terms_checklist ( $post_ID, $taxonomy, $number = 10 ) {
 		if ( $post_ID )
 			$checked_terms = wp_get_object_terms($post_ID, $taxonomy, array('fields'=>'ids'));
 		else
@@ -1189,8 +1441,6 @@ class ShoppAdminProductCategoriesBox extends ShoppAdminTaxonomyMetabox {
 		$popular_ids = array();
 		foreach ( (array) $terms as $term ) {
 			$popular_ids[] = $term->term_id;
-			if ( !$echo ) // hack for AJAX use
-				continue;
 			$id = "popular-$taxonomy-$term->term_id";
 			$checked = in_array( $term->term_id, $checked_terms ) ? 'checked="checked"' : '';
 			?>
@@ -1209,12 +1459,22 @@ class ShoppAdminProductCategoriesBox extends ShoppAdminTaxonomyMetabox {
 
 }
 
+/**
+ * Product editor tags meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductTaggingBox extends ShoppAdminTaxonomyMetabox {
 
 	protected $view = 'products/tagging.php';
 
 }
 
+/**
+ * Product editor settings meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductSettingsBox extends ShoppAdminMetabox {
 
 	protected $id = 'product-settings';
@@ -1231,6 +1491,11 @@ class ShoppAdminProductSettingsBox extends ShoppAdminMetabox {
 
 }
 
+/**
+ * Product editor summary meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductSummaryBox extends ShoppAdminMetabox {
 
 	protected $id = 'product-summary';
@@ -1242,6 +1507,11 @@ class ShoppAdminProductSummaryBox extends ShoppAdminMetabox {
 
 }
 
+/**
+ * Product editor details meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductDetailsBox extends ShoppAdminMetabox {
 
 	protected $id = 'product-details';
@@ -1253,6 +1523,11 @@ class ShoppAdminProductDetailsBox extends ShoppAdminMetabox {
 
 }
 
+/**
+ * Product editor images meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductImagesBox extends ShoppAdminMetabox {
 
 	protected $id = 'product-images';
@@ -1264,6 +1539,11 @@ class ShoppAdminProductImagesBox extends ShoppAdminMetabox {
 
 }
 
+/**
+ * Product editor price meta box
+ *
+ * @since 1.4
+ **/
 class ShoppAdminProductPricingBox extends ShoppAdminMetabox {
 
 	protected $id = 'product-pricing-box';

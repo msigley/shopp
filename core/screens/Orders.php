@@ -74,7 +74,7 @@ class ShoppAdminOrders extends ShoppAdminController {
 /**
  * Orders table screen controller
  *
- * @since 1.1
+ * @since 1.4
  **/
 class ShoppScreenOrders extends ShoppScreenController {
 
@@ -194,6 +194,12 @@ class ShoppScreenOrders extends ShoppScreenController {
 	 **/
 	public function layout () {
 		$this->table('ShoppOrdersTable');
+		add_screen_option( 'per_page', array(
+			'label' => Shopp::__('Orders Per Page'),
+			'default' => 20,
+			'option' => 'edit_' . ShoppProduct::$posttype . '_per_page'
+		));
+		
 	}
 
 	/**
@@ -205,44 +211,10 @@ class ShoppScreenOrders extends ShoppScreenController {
 	 **/
 	public function screen () {
 
-		$Orders = $this->orders;
-		$ordercount = $this->ordercount;
-		$num_pages = ceil($ordercount->total / $per_page);
-
 		$Table = $this->table();
 		$Table->prepare_items();
 
 		include $this->ui('orders.php');
-	}
-
-	/**
-	 * Recalculate order totals
-	 *
-	 * @since 1.3
-	 *
-	 * @return void
-	 **/
-	private function retotal ( ShoppPurchase $Purchase ) {
-		$Cart = new ShoppCart();
-
-		$taxcountry = $Purchase->country;
-		$taxstate = $Purchase->state;
-		if ( ! empty($Purchase->shipcountry) && ! empty($Purchase->shipstate) ) {
-			$taxcountry = $Purchase->shipcountry;
-			$taxstate = $Purchase->shipstate;
-		}
-		ShoppOrder()->Tax->location($taxcountry, $taxstate);
-
-		foreach ( $Purchase->purchased as $index => &$Purchased )
-			$Cart->additem($Purchased->quantity, new ShoppCartItem($Purchased));
-
-		$Cart->Totals->register( new OrderAmountShipping( array('id' => 'cart', 'amount' => $Purchase->freight ) ) );
-
-		$Purchase->total = $Cart->total();
-		$Purchase->subtotal = $Cart->total('order');
-		$Purchase->discount = $Cart->total('discount');
-		$Purchase->tax = $Cart->total('tax');
-		$Purchase->freight = $Cart->total('shipping');
 	}
 
 	public static function navigation () {
@@ -287,120 +259,275 @@ class ShoppScreenOrders extends ShoppScreenController {
 } // class ShoppScreenOrders
 
 /**
- * Images Table UI renderer
+ * Helper class to generate and query for order items for the orders table controller
  *
  * @since 1.4
- * @package Shopp/Admin/Settings
+ **/
+class ShoppOrdersTableQuery {
+	
+	public $views = array();
+
+	protected $view = 'all';
+
+	protected $select = 'o.*';
+	protected $where = array();
+	protected $joins = array();
+	protected $limit = false;
+	protected $order = 'DESC';
+	protected $orderby = 'o.created';
+	protected $debug = false;
+	
+	/**
+	 * Constructor
+	 * 
+	 * Define available views for this screen and set the initial view
+	 * 
+	 * @param string $view The initial view
+	 **/
+	public function __construct () {
+		$this->select = "o.*";
+		$this->table = ShoppDatabaseObject::tablename(ShoppPurchase::$table);
+	}
+	
+	/**
+	 * Query for order entry items
+	 *
+	 * @since 1.4
+	 * 
+	 * @return array List of order items
+	 **/
+	public function items() {
+		$where = ! empty($this->where) ? "WHERE " . join(' AND ', $this->where) : '';
+		$joins = join(' ', $this->joins);
+		$query = "SELECT $this->select FROM $this->table AS o $joins $where ORDER BY $this->orderby $this->order LIMIT $this->limit";
+		if ( $this->debug ) echo $query;
+		return sDB::query($query, 'array', 'index', 'id');
+	}
+  
+	/**
+	 * Query for the total number of orders, sales total and average sale amounts
+	 * 
+	 * Uses the current request query parameters to update the totals.
+	 *
+	 * @since 1.4
+	 * 
+	 * @return object An object structuring containing the total, sales and avg sale numbers
+	 **/
+	public function count() {
+		$selects = array(
+			"count(*) as total",
+			"SUM(IF(txnstatus IN ('authed','captured'),total,NULL)) AS sales",
+			"AVG(IF(txnstatus IN ('authed','captured'),total,NULL)) AS avgsale"
+		);
+		$columns = join(',', $selects);
+		$where = ! empty($this->where) ? "WHERE " . join(' AND ', $this->where) : '';
+		$joins = join(' ', $this->joins);
+		
+		$query = "SELECT $columns FROM $this->table AS o $joins $where ORDER BY $this->orderby $this->order LIMIT 1";
+		if ( $this->debug ) echo $query;
+		return sDB::query($query, 'object');
+	}
+	
+	/**
+	 * Set the status index for the query
+	 *
+	 * @since 1.4
+	 * @param int $status The status index number
+	 * @return void
+	 **/
+	public function status( $status = 0 ) {
+		$status = absint($status);
+		if ( ! empty($status) ) 
+			$this->where[] = "status='" . sDB::escape($status) . "'";
+	}
+	
+	/**
+	 * Set the date range for the query
+	 *
+	 * @since 1.4
+	 * @param string $startdate The start date request in a formatted string "MM/DD/YYYY"
+	 * @param string $enddate The end date request in a formatted string "MM/DD/YYYY"
+	 * @return void
+	 **/
+	public function daterange( $startdate = false, $enddate = false ) {
+		if ( empty($startdate) )
+			$startdate = '01/01/2000';
+		
+		list($month, $day, $year) = explode('/', $startdate);
+		$starts = mktime(0, 0, 0, $month, $day, $year);
+
+		if ( empty($enddate) )
+			$ends = time();
+		else {
+			list($month, $day, $year) = explode('/', $enddate);
+			$ends = mktime(23, 59, 59, $month, $day, $year);
+		}
+		
+		$this->where[] = "created BETWEEN '" . sDB::mkdatetime($starts) . "' AND '" . sDB::mkdatetime($ends) . "'";
+	}
+	
+	/**
+	 * Set the search query
+	 *
+	 * @since 1.4
+	 * @param string $query The search query string
+	 * @return void
+	 **/
+	public function search( $query ) {
+		$query = stripslashes(strtolower($query));
+		
+		$namequery = "CONCAT(firstname,' ',lastname) LIKE '%" . sDB::escape($query) . "%')";
+		$defaultquery = "(id='$query' OR $namequery";
+		
+		// Search by query:keyword
+		if ( preg_match_all('/(\w+?)\:(?="(.+?)"|(.+?)\b)/', $query, $parts, PREG_SET_ORDER) > 0 ) {
+			$search = array();
+			foreach ( $parts as $keywords )
+				$search += $this->keysearch($keywords);
+			$this->where[] = "(" . join(' OR ', $search) . ")";
+		} elseif ( strpos($query, '@') !== false ) { // Search by email if @ is detected
+			 $this->where[] = "email='" . sDB::escape($query) . "'";
+		} else $this->where[] = $defaultquery; // Otherwise, use default query
+	}
+	
+	/**
+	 * Helper to search by specified keywords
+	 *
+	 * @since 1.4
+	 * @param array	$keywords The query type and keywords
+	 * @return void
+	 **/
+	protected function keysearch( array $keywords ) {
+		$search = array();
+		
+		list(,$query, $quoted, $keyword) = $keywords;
+		$keyword = sDB::escape( ! empty($quoted) ? $quoted : $keyword );
+		
+		$sql = array(
+			'txn'	  => "txnid='$keyword'",
+			'company'  => "company LIKE '%$keyword%'",
+			'gateway'  => "gateway LIKE '%$keyword%'",
+			'cardtype' => "cardtype LIKE '%$keyword%'",
+			'address'  => "(address LIKE '%$keyword%' OR xaddress='%$keyword%')",
+			'city'	 => "city LIKE '%$keyword%'",
+			'state'	=> "state='$keyword'",
+			'postcode' => "postcode='$keyword'",
+			'country'  => "country='$keyword'",
+			'discount' => "m.value LIKE '%$keyword%'",
+			'product'  => "p.name LIKE '%$keyword%' OR p.optionlabel LIKE '%$keyword%' OR p.sku LIKE '%$keyword%'"
+		);
+		
+		$sql['province'] = $sql['state'];
+		$sql['zip'] = $sql['zipcode'] = $sql['postcode'];
+		$sql['promo'] = $sql['discount'];
+		
+		if ( isset($sql[ $query ]) )
+			$search[] = $sql[ $query ];
+		
+		if ( in_array($query, array('promo', 'discount')) ) {
+			$meta_table = ShoppDatabaseObject::tablename(ShoppMetaObject::$table);
+			$this->joins[ $meta_table ] = "INNER JOIN $meta_table AS m ON m.parent = o.id AND context='purchase'";
+		}
+		
+		if ( 'product' == $query ) {
+			$purchased_table = ShoppDatabaseObject::tablename(ShoppPurchased::$table);
+			$this->joins[ $purchased_table ] = "INNER JOIN $purchased_table AS p ON p.purchase = o.id";
+		}
+
+		return $search;
+	}
+	
+	/**
+	 * Set the customer query
+	 *
+	 * @since 1.4
+	 * @param int $id The customer id number
+	 * @return void
+	 **/
+	public function customer( $id ) {
+		$this->where[] = "customer=" . intval($id);
+	}
+	
+	/**
+	 * Set the current page limit query parameter
+	 *
+	 * @since 1.4
+	 * @param int $page The page number to set
+	 * @return void
+	 **/
+	public function page ( $page = 1 ) {
+		if ( ! $page ) $page = 1;
+
+		$page = absint($page);
+
+		$perpage = $this->perpage();
+
+		$start = $perpage * ( $page - 1 );
+		$this->limit = "$start,$perpage";
+	}
+	
+	/**
+	 * Determine the per page option to use for this screen
+	 *
+	 * @since 1.4
+	 * 
+	 * @return int The number of entries to show per page
+	 **/
+	public function perpage () {
+		$per_page_option = get_current_screen()->get_option( 'per_page' );
+		$perpage = absint($per_page_option['default']);
+		if ( false !== ( $user_perpage = get_user_option($per_page_option['option']) ) )
+			$perpage = absint($user_perpage);
+		return $perpage;
+	}
+	
+}
+
+/**
+ * Renders the order table for the orders manager
+ *
+ * @since 1.4
+ * @package Shopp\Admin\Settings
  **/
 class ShoppOrdersTable extends ShoppAdminTable {
 
 	/** @var private $gateways List of gateway modules */
 	private $gateways = array();
 
+	/** @var private $statuses List of order status labels */
 	private $statuses = array();
 
+	/** @var private $txnstatus List of transaction status labels */
 	private $txnstatuses = array();
 
+	/**
+	 * Load the order items for the table
+	 *
+	 * @since 1.4
+	 * 
+	 * @return void
+	 **/
 	public function prepare_items() {
+		
+		$ItemsQuery = new ShoppOrdersTableQuery();
 
-		$defaults = array(
-			'page' => false,
-			'deleting' => false,
-			'selected' => false,
-			'update' => false,
-			'newstatus' => false,
-			'pagenum' => 1,
-			'paged' => 1,
-			'per_page' => 20,
-			'start' => '',
-			'end' => '',
-			'status' => false,
-			's' => '',
-			'range' => '',
-			'startdate' => '',
-			'enddate' => '',
-		);
+		if ( $this->request('start') || $this->request('end') )
+			$ItemsQuery->daterange($this->request('start'), $this->request('end'));
+		
+		if ( $this->request('status') )
+			$ItemsQuery->status($this->request('status'));
+		
+		if ( $this->request('s') )
+			$ItemsQuery->search($this->request('s'));
 
-		$args = array_merge($defaults, $this->request());
-		extract($args, EXTR_SKIP);
+		if ( $this->request('customer') )
+			$ItemsQuery->customer($this->request('customer'));
 
-		// $url = $this->url($_GET);
+		$ItemsQuery->page($this->request('paged'));
 
-		$statusLabels = shopp_setting('order_status');
-		if (empty($statusLabels)) $statusLabels = array('');
-		$txnstatus_labels = Lookup::txnstatus_labels();
-
-		$Purchase = new ShoppPurchase();
-
-		$offset = get_option( 'gmt_offset' ) * 3600;
-
-		if ( $this->request('start') ) {
-			list($month, $day, $year) = explode("/", $this->request('start'));
-			$starts = mktime(0, 0, 0, $month, $day, $year);
-		}
-		if ( $this->request('end') ) {
-			list($month, $day, $year) = explode("/", $this->request('end'));
-			$ends = mktime(23, 59, 59, $month, $day, $year);
-		}
-		$pagenum = absint( $paged );
-		$start = ( $per_page * ( $pagenum - 1 ) );
-
-		$where = array();
-		$joins = array();
-		if ( ! empty($status) || '0' === $status ) $where[] = "status='" . sDB::escape($status) . "'";
-		if ( ! empty($s) ) {
-			$s = stripslashes($s);
-			$search = array();
-			if ( preg_match_all('/(\w+?)\:(?="(.+?)"|(.+?)\b)/', $s, $props, PREG_SET_ORDER) > 0 ) {
-				foreach ( $props as $query ) {
-					$keyword = sDB::escape( ! empty($query[2]) ? $query[2] : $query[3] );
-					switch(strtolower($query[1])) {
-						case "txn": 		$search[] = "txnid='$keyword'"; break;
-						case "company":		$search[] = "company LIKE '%$keyword%'"; break;
-						case "gateway":		$search[] = "gateway LIKE '%$keyword%'"; break;
-						case "cardtype":	$search[] = "cardtype LIKE '%$keyword%'"; break;
-						case "address": 	$search[] = "(address LIKE '%$keyword%' OR xaddress='%$keyword%')"; break;
-						case "city": 		$search[] = "city LIKE '%$keyword%'"; break;
-						case "province":
-						case "state": 		$search[] = "state='$keyword'"; break;
-						case "zip":
-						case "zipcode":
-						case "postcode":	$search[] = "postcode='$keyword'"; break;
-						case "country": 	$search[] = "country='$keyword'"; break;
-						case "promo":
-						case "discount":
-											$meta_table = ShoppDatabaseObject::tablename(ShoppMetaObject::$table);
-											$joins[$meta_table] = "INNER JOIN $meta_table AS m ON m.parent = o.id AND context='purchase'";
-											$search[] = "m.value LIKE '%$keyword%'"; break;
-						case "product":
-											$purchased = ShoppDatabaseObject::tablename(Purchased::$table);
-											$joins[$purchased] = "INNER JOIN $purchased AS p ON p.purchase = o.id";
-											$search[] = "p.name LIKE '%$keyword%' OR p.optionlabel LIKE '%$keyword%' OR p.sku LIKE '%$keyword%'"; break;
-					}
-				}
-				if ( empty($search) ) $search[] = "(id='$s' OR CONCAT(firstname,' ',lastname) LIKE '%$s%')";
-				$where[] = "(" . join(' OR ', $search) . ")";
-			} elseif ( strpos($s, '@') !== false ) {
-				 $where[] = "email='" . sDB::escape($s) . "'";
-			} else $where[] = "(id='$s' OR CONCAT(firstname,' ',lastname) LIKE '%" . sDB::escape($s) . "%')";
-		}
-
-		if ( ! empty($starts) && ! empty($ends) ) $where[] = "created BETWEEN '" . sDB::mkdatetime($starts) . "' AND '" . sDB::mkdatetime($ends) . "'";
-
-		if ( ! empty($customer) ) $where[] = "customer=" . intval($customer);
-		$where = ! empty($where) ? "WHERE " . join(' AND ', $where) : '';
-		$joins = join(' ', $joins);
-
-		$countquery = "SELECT count(*) as total,SUM(IF(txnstatus IN ('authed','captured'),total,NULL)) AS sales,AVG(IF(txnstatus IN ('authed','captured'),total,NULL)) AS avgsale FROM $Purchase->_table AS o $joins $where ORDER BY o.created DESC LIMIT 1";
-		$this->ordercount = sDB::query($countquery, 'object');
-
-		$query = "SELECT o.* FROM $Purchase->_table AS o $joins $where ORDER BY created DESC LIMIT $start,$per_page";
-		$this->items = sDB::query($query, 'array', 'index', 'id');
-
-		$num_pages = ceil($this->ordercount->total / $per_page);
-		if ( $paged > 1 && $paged > $num_pages ) Shopp::redirect( add_query_arg('paged', null, $url) );
-
-
+		$this->ordercount = $ItemsQuery->count();
+		$this->items = $ItemsQuery->items();
+		
 		$Gateways = Shopp::object()->Gateways;
 		$this->gateways = array_merge($Gateways->modules, array('ShoppFreeOrder' => $Gateways->freeorder));
 
@@ -418,14 +545,23 @@ class ShoppOrdersTable extends ShoppAdminTable {
 		$date_format = str_replace('y', 'Y/', $date_format);
 		$date_format = preg_replace("/[^dmY0-9\/]/", '', $date_format);
 		$this->dates = trim($date_format, '/');
-
+		
+		$perpage = $ItemsQuery->perpage();
+		
 		$this->set_pagination_args( array(
 			'total_items' => $this->ordercount->total,
-			'total_pages' => $this->ordercount->total / $per_page,
-			'per_page' => $per_page
+			'total_pages' => $this->ordercount->total / $perpage,
+			'per_page' => $perpage
 		) );
 	}
 
+	/**
+	 * Setup the bulk actions menu
+	 *
+	 * @since 1.4
+	 * @param string $which Specify which bulk action menu to change ('top', 'bottom')
+	 * @return array The list of actions
+	 **/
 	protected function get_bulk_actions( $which ) {
 		if ( 'bottom' == $which ) return;
 		$actions = array(
@@ -436,12 +572,26 @@ class ShoppOrdersTable extends ShoppAdminTable {
 		return $actions + $statuses;
 	}
 
+	/**
+	 * Show extra controls in the top or bottom table navigation
+	 *
+	 * @since 1.4
+	 * @param string $which Specify which bulk action menu to change ('top', 'bottom')
+	 * @return array The list of actions
+	 **/
 	public function extra_tablenav( $which ) {
 		if ( 'bottom' == $which ) $this->bottom_tablenav();
-		if ( 'top' == $which )    $this->top_tablenav();
+		if ( 'top' == $which )	$this->top_tablenav();
 	}
 
-	protected function bottom_tablenav () {
+    /**
+     * Render the bottom table navigation
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
+	protected function bottom_tablenav() {
 		if ( ! current_user_can('shopp_financials') || ! current_user_can('shopp_export_orders') ) return;
 
 		$exporturl = add_query_arg(urlencode_deep(array_merge(stripslashes_deep($_GET), array('src' => 'export_purchases'))));
@@ -454,15 +604,10 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			. '		<div id="export-columns" class="multiple-select">'
 			. '			<ul>';
 
-		$even = true;
+		echo '				<li><input type="checkbox" name="selectall_columns" id="selectall_columns" /><label for="selectall_columns"><strong>' . Shopp::__('Select All') . '</strong></label></li>';
 
-		echo '				<li' . ( $even ? '' : ' class="odd"' ) . '><input type="checkbox" name="selectall_columns" id="selectall_columns" /><label for="selectall_columns"><strong>' . Shopp::__('Select All') . '</strong></label></li>';
 
-		$even = ! $even;
-
-		echo '				<li' . ( $even ? '' : ' class="odd"' ) . '><input type="hidden" name="settings[purchaselog_headers]" value="off" /><input type="checkbox" name="settings[purchaselog_headers]" id="purchaselog_headers" value="on" /><label for="purchaselog_headers"><strong>' . Shopp::__('Include column headings') . '</strong></label></li>';
-
-		$even = ! $even;
+		echo '				<li><input type="hidden" name="settings[purchaselog_headers]" value="off" /><input type="checkbox" name="settings[purchaselog_headers]" id="purchaselog_headers" value="on" /><label for="purchaselog_headers"><strong>' . Shopp::__('Include column headings') . '</strong></label></li>';
 
 		$exportcolumns = array_merge(ShoppPurchase::exportcolumns(), ShoppPurchased::exportcolumns());
 		$selected = shopp_setting('purchaselog_columns');
@@ -470,9 +615,7 @@ class ShoppOrdersTable extends ShoppAdminTable {
 
 		foreach ( $exportcolumns as $name => $label ) {
 			if ( 'cb' == $name ) continue;
-			echo '				<li' . ( $even ? '' : ' class="odd"' ) . '><input type="checkbox" name="settings[purchaselog_columns][]" value="' . esc_attr($name) . '" id="column-' . esc_attr($name) . '" ' . ( in_array($name, $selected) ? ' checked="checked"' : '' ) . ' /><label for="column-' . esc_attr($name) . '">' . esc_html($label) . '</label></li>';
-			$even = ! $even;
-
+			echo '				<li><input type="checkbox" name="settings[purchaselog_columns][]" value="' . esc_attr($name) . '" id="column-' . esc_attr($name) . '" ' . ( in_array($name, $selected) ? ' checked="checked"' : '' ) . ' /><label for="column-' . esc_attr($name) . '">' . esc_html($label) . '</label></li>';
 		}
 
 		echo  '			</ul>'
@@ -501,24 +644,31 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			. '</div>';
 	}
 
-	protected function top_tablenav () {
+    /**
+     * Render the top table navigation
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
+	protected function top_tablenav() {
 		$range = $this->request('range') ? $this->request('range') : 'all';
 		$ranges = array(
-			'all'         => Shopp::__('Show All Orders'),
-			'today'       => Shopp::__('Today'),
-			'week'        => Shopp::__('This Week'),
-			'month'       => Shopp::__('This Month'),
-			'quarter'     => Shopp::__('This Quarter'),
-			'year'        => Shopp::__('This Year'),
+			'all'		 => Shopp::__('Show All Orders'),
+			'today'	   => Shopp::__('Today'),
+			'week'		=> Shopp::__('This Week'),
+			'month'	   => Shopp::__('This Month'),
+			'quarter'	 => Shopp::__('This Quarter'),
+			'year'		=> Shopp::__('This Year'),
 			'yesterday'   => Shopp::__('Yesterday'),
-			'lastweek'    => Shopp::__('Last Week'),
-			'last30'      => Shopp::__('Last 30 Days'),
-			'last90'      => Shopp::__('Last 3 Months'),
+			'lastweek'	=> Shopp::__('Last Week'),
+			'last30'	  => Shopp::__('Last 30 Days'),
+			'last90'	  => Shopp::__('Last 3 Months'),
 			'lastmonth'   => Shopp::__('Last Month'),
 			'lastquarter' => Shopp::__('Last Quarter'),
-			'lastyear'    => Shopp::__('Last Year'),
+			'lastyear'	=> Shopp::__('Last Year'),
 			'lastexport'  => Shopp::__('Last Export'),
-			'custom'      => Shopp::__('Custom Dates'),
+			'custom'	  => Shopp::__('Custom Dates'),
 		);
 
 		echo  '<div class="alignleft actions">'
@@ -541,6 +691,13 @@ class ShoppOrdersTable extends ShoppAdminTable {
 
 	}
 
+    /**
+     * Specify the table columns
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
 	public function get_columns() {
 		return array(
 			'cb'          => '<input type="checkbox" />',
@@ -552,24 +709,62 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			'total'       => Shopp::__('Total')
 		);
 	}
-
+    
+    /**
+     * Render text when no orders are available
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
 	public function no_items() {
 		Shopp::_e('No orders, yet.');
 	}
 
-	public function column_default( $Item ) {
+    /**
+     * Render an empty column by default
+     *
+     * This method is used to render the column by default when no 
+     * specific renderer method matches the column name.
+     * 
+     * @since 1.4
+     * 
+     * @return string Empty string
+     **/
+	public function column_default() {
 		return '';
 	}
 
+    /**
+     * Render the order checkbox to select the order row for bulk actions
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Item The order Item object
+     * @return string The selection checkbox
+     **/
 	public function column_cb( $Item ) {
 		return '<input type="checkbox" name="selected[]" value="' . $Item->id . '" />';
 	}
 
+    /**
+     * Render the Order column description and convenience management controls
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Item The order Item object
+     * @return string The order column description and management controls
+     **/
 	public function column_order( $Item ) {
 		$url = add_query_arg('id', $Item->id);
 		return '<a class="row-title" href="' . esc_url($url) . '" title="' . Shopp::__('View Order #%d', $Item->id) . '">' . Shopp::__('Order #%d', $Item->id) . '</a>';
 	}
 
+    /**
+     * Render the customer name for the order
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Item The order Item object
+     * @return string The customer name
+     **/
 	public function column_name( $Item ) {
 		if ( '' == trim($Item->firstname . $Item->lastname) )
 			$customer = '(' . Shopp::__('no contact name') . ')';
@@ -582,8 +777,14 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			return "<br />" . esc_html($Item->company);
 	}
 
+    /**
+     * Render the order destination column
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Item The order Item object
+     * @return string The destination column
+     **/
 	public function column_destination( $Item ) {
-		$addrfields = array('city','state','country');
 		$format = '%3$s, %2$s &mdash; %1$s';
 
 		if ( empty($Item->shipaddress) )
@@ -598,6 +799,13 @@ class ShoppOrdersTable extends ShoppAdminTable {
 		return esc_html($location);
 	}
 
+    /**
+     * Render the order transaction column
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Item The order Item object
+     * @return string The transaction column
+     **/
 	public function column_txn( $Item ) {
 		return $Item->txnid;
 
@@ -605,6 +813,13 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			echo '<br />' . esc_html($this->gateways[ $Item->gateway ]->name);
 	}
 
+    /**
+     * Render the order date column
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Item The order Item object
+     * @return string The formatted date column
+     **/
 	public function column_date( $Item ) {
 		return date($this->dates, mktimestamp($Item->created));
 
@@ -612,6 +827,13 @@ class ShoppOrdersTable extends ShoppAdminTable {
 			return '<br /><strong>' . esc_html($this->statuses[ $Item->status ]) . '</strong>';
 	}
 
+    /**
+     * Render the order total column
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Item The order Item object
+     * @return string The total column with the transaction status
+     **/
 	public function column_total( $Item ) {
 		return money($Item->total);
 
@@ -624,10 +846,22 @@ class ShoppOrdersTable extends ShoppAdminTable {
 
 } // class ShoppOrdersTable
 
+/**
+ * Screen controller for the Order Manager / Editor
+ *
+ * @since 1.4
+ **/
 class ShoppScreenOrderManager extends ShoppScreenController {
 
+    /**
+     * Load the requested order
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
 	public function load() {
-		$id = (int) $_GET['id'];
+		$id = (int) $this->request('id');
 		if ( $id > 0 ) {
 			ShoppPurchase( new ShoppPurchase($id) );
 			ShoppPurchase()->load_purchased();
@@ -653,16 +887,16 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 		shopp_enqueue_script('orders');
 		shopp_custom_script('orders', 'var address = [], carriers = ' . json_encode($this->shipcarriers()) . ';');
 		shopp_localize_script( 'orders', '$om', array(
-			'co'     => Shopp::__('Cancel Order'),
-			'mr'     => Shopp::__('Mark Refunded'),
-			'pr'     => Shopp::__('Process Refund'),
-			'dnc'    => Shopp::__('Do Not Cancel'),
-			'ro'     => Shopp::__('Refund Order'),
+			'co'	 => Shopp::__('Cancel Order'),
+			'mr'	 => Shopp::__('Mark Refunded'),
+			'pr'	 => Shopp::__('Process Refund'),
+			'dnc'	=> Shopp::__('Do Not Cancel'),
+			'ro'	 => Shopp::__('Refund Order'),
 			'cancel' => Shopp::__('Cancel'),
-			'rr'     => Shopp::__('Reason for refund'),
-			'rc'     => Shopp::__('Reason for cancellation'),
-			'mc'     => Shopp::__('Mark Cancelled'),
-			'stg'    => Shopp::__('Send to gateway')
+			'rr'	 => Shopp::__('Reason for refund'),
+			'rc'	 => Shopp::__('Reason for cancellation'),
+			'mc'	 => Shopp::__('Mark Cancelled'),
+			'stg'	=> Shopp::__('Send to gateway')
 		));
 
 		shopp_enqueue_script('address');
@@ -671,6 +905,13 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 		do_action('shopp_order_management_scripts');
 	}
 
+    /**
+     * Specify operation handlers
+     *
+     * @since 1.4
+     * 
+     * @return array List of operation handler method names
+     **/
 	public function ops() {
 		return array(
 			'remove_item',
@@ -679,6 +920,13 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 		);
 	}
 
+    /**
+     * Handler for removing a line item from the order
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
 	public function remove_item() {
 
 		if ( ! $this->form('rmvline') ) return;
@@ -720,11 +968,18 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 
 	}
 
+    /**
+     * Handler for saving changes to a line item on the order
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
 	public function save_item() {
 
 		if ( false === $this->form('save-item') || false === $lineid = $this->form('lineid') ) return;
 
-		$Purchase = new ShoppPurchase($this->form('id'));
+		$Purchase = new ShoppPurchase($this->request('id'));
 		if ( ! $Purchase->exists() ) return;
 
 		$new = ( '' === $lineid );
@@ -771,12 +1026,12 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 				$Cart->additem((int)$this->form('quantity'), $CartItem);
 				$CartItem = $Cart->get($CartItem->fingerprint());
 
-				$Purchased->name      = $CartItem->name;
+				$Purchased->name	  = $CartItem->name;
 				$Purchased->product   = $CartItem->product;
-				$Purchased->price     = $CartItem->priceline;
+				$Purchased->price	 = $CartItem->priceline;
 				$Purchased->quantity  = $CartItem->quantity;
 				$Purchased->unitprice = $CartItem->unitprice;
-				$Purchased->total     = $CartItem->total;
+				$Purchased->total	 = $CartItem->total;
 
 				$Purchased->save();
 
@@ -798,17 +1053,48 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 
 	}
 
+    /**
+     * Handler for saving changes to order totals
+     *
+     * @since 1.4
+     * 
+     * @return void
+     **/
 	public function save_totals() {
-
 		if ( ! $this->form('save-totals') ) return;
 
-		$Purchase = new ShoppPurchase($this->form('id'));
+		$Purchase = new ShoppPurchase($this->request('id'));
 		if ( ! $Purchase->exists() ) return;
 
 		$totals = array();
 		if ( $this->form('totals') )
 			$totals = $this->form('totals');
 
+		$total = 0;
+		foreach ( $totals as $property => $fields ) {
+			if ( empty($fields) ) continue;
+
+			if ( count($fields) > 1 )
+				$this->tallyfields($Purchase, $property, $fields);
+			else $Purchase->$property = Shopp::floatval($fields[0]);
+
+			$total += ('discount' == $property ? $Purchase->$property * -1 : $Purchase->$property );
+		}
+
+		$Purchase->total = $Purchase->subtotal + $total;
+		$Purchase->save();
+	}
+	
+    /**
+     * Helper for tallying up multi-line tax, shipping, discounts and fees
+     *
+     * @since 1.4
+     * @param ShoppPurchase $Purchase The order we're working on
+     * @param string $property The property getting tallied up
+     * @param array $fields The list of fields to tally
+     * @return void
+     **/
+	protected function tallyfields ( &$Purchase, $property, array $fields ) {
 		$objects = array(
 			'tax' => 'OrderAmountTax',
 			'shipping' => 'OrderAmountShipping',
@@ -821,45 +1107,38 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 			'shipping' => 'shipfees',
 			'discount' => 'discounts'
 		);
+		
+		if ( isset($fields['labels']) ) {
+			$labels = $fields['labels'];
+			unset($fields['labels']);
+			if ( count($fields) > count($labels) )
+				array_pop($fields); // Remove the total
 
-		$total = 0;
-		foreach ( $totals as $property => $fields ) {
-			if ( empty($fields) ) continue;
-
-			if ( count($fields) > 1 ) {
-				if ( isset($fields['labels']) ) {
-					$labels = $fields['labels'];
-					unset($fields['labels']);
-					if ( count($fields) > count($labels) )
-						$totalfield = array_pop($fields);
-
-					$fields = array_combine($labels, $fields);
-				}
-
-				$fields = array_map(array('Shopp', 'floatval'), $fields);
-
-				$entries = array();
-				$OrderAmountObject = isset($objects[ $property ]) ? $objects[ $property ] : 'OrderAmountFee';
-				foreach ( $fields as $label => $amount )
-					$entries[] = new $OrderAmountObject(array('id' => count($entries) + 1, 'label' => $label, 'amount' => $amount));
-
-				$savetotal = isset($methods[ $property ]) ? $methods[ $property ] : $fees;
-				$Purchase->$savetotal($entries);
-
-				$sum = array_sum($fields);
-				if ( $sum > 0 )
-					$Purchase->$property = $sum;
-
-			} else $Purchase->$property = Shopp::floatval($fields[0]);
-
-			$total += ('discount' == $property ? $Purchase->$property * -1 : $Purchase->$property );
-
+			$fields = array_combine($labels, $fields);
 		}
 
-		$Purchase->total = $Purchase->subtotal + $total;
-		$Purchase->save();
+		$fields = array_map(array('Shopp', 'floatval'), $fields);
+
+		$entries = array();
+		$OrderAmountObject = isset($objects[ $property ]) ? $objects[ $property ] : 'OrderAmountFee';
+		foreach ( $fields as $label => $amount )
+			$entries[] = new $OrderAmountObject(array('id' => count($entries) + 1, 'label' => $label, 'amount' => $amount));
+
+		$tally = isset($methods[ $property ]) ? $methods[ $property ] : 'fees';
+		$Purchase->$tally($entries);
+
+		$sum = array_sum($fields);
+		if ( $sum > 0 )
+			$Purchase->$property = $sum;
 	}
 
+    /**
+     * Provide a list of shipping carriers 
+     *
+     * @since 1.4
+     * 
+     * @return array A list of shipping carriers
+     **/
 	public function shipcarriers() {
 
 		$shipcarriers = ShoppLookup::shipcarriers(); // The full list of available shipping carriers
@@ -936,7 +1215,6 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 	/**
 	 * Interface processor for the order manager
 	 *
-	 * @author Jonathan Davis
 	 * @return void
 	 **/
 	public function screen () {
@@ -946,65 +1224,20 @@ class ShoppScreenOrderManager extends ShoppScreenController {
 
 		$Purchase = ShoppPurchase();
 		$Purchase->Customer = new ShoppCustomer($Purchase->customer);
-		$Gateway = $Purchase->gateway();
-
-
-
-
-
-
-
-
-		// $targets = shopp_setting('target_markets');
-		// $default = array('' => '&nbsp;');
-		// $Purchase->_countries = array_merge($default, ShoppLookup::countries());
-		//
-		// $regions = ShoppLookup::country_zones();
-		// $Purchase->_billing_states = array_merge($default, (array)$regions[ $Purchase->country ]);
-		// $Purchase->_shipping_states = array_merge($default, (array)$regions[ $Purchase->shipcountry ]);
-
-		// Setup shipping carriers menu and JS data
-		// $carriers_menu = $carriers_json = array();
-		// $shipping_carriers = (array) shopp_setting('shipping_carriers'); // The store-preferred shipping carriers
-		// $shipcarriers = Lookup::shipcarriers(); // The full list of available shipping carriers
-		// $notrack = Shopp::__('No Tracking'); // No tracking label
-		// $default = get_user_meta(get_current_user_id(), 'shopp_shipping_carrier', true);
-		//
-		// if ( isset($shipcarriers[ $default ]) ) {
-		// 	$carriers_menu[ $default ] = $shipcarriers[ $default ]->name;
-		// 	$carriers_json[ $default ] = array($shipcarriers[ $default ]->name, $shipcarriers[ $default ]->trackpattern);
-		// } else {
-		// 	$carriers_menu['NOTRACKING'] = $notrack;
-		// 	$carriers_json['NOTRACKING'] = array($notrack, false);
-		// }
-		//
-		// $serviceareas = array('*', ShoppBaseLocale()->country());
-		// foreach ( $shipcarriers as $code => $carrier ) {
-		// if ( $code == $default ) continue;
-		// if ( ! empty($shipping_carriers) && ! in_array($code, $shipping_carriers) ) continue;
-		// 	if ( ! in_array($carrier->areas, $serviceareas) ) continue;
-		// 	$carriers_menu[ $code ] = $carrier->name;
-		// 	$carriers_json[ $code ] = array($carrier->name, $carrier->trackpattern);
-		// }
-		//
-		// if ( isset($shipcarriers[ $default ]) ) {
-		// 	$carriers_menu['NOTRACKING'] = $notrack;
-		// 	$carriers_json['NOTRACKING'] = array($notrack, false);
-		// }
-
-		if ( empty($statusLabels) ) $statusLabels = array('');
-
+        
 		$Purchase->taxes();
 		$Purchase->discounts();
-
-		$columns = get_column_headers($this->id);
-		$hidden = get_hidden_columns($this->id);
 
 		include $this->ui('order.php');
 	}
 
 } // class ShoppScreenOrderManager
 
+/**
+ * Renders the order entry editor
+ *
+ * @since 1.4
+ **/
 class ShoppScreenOrderEntry extends ShoppScreenOrderManager {
 
 	public function load () {
@@ -1015,11 +1248,11 @@ class ShoppScreenOrderEntry extends ShoppScreenOrderManager {
 
 		$Purchase = ShoppPurchase();
 
-		ShoppUI::register_column_headers($this->id, apply_filters('shopp_order_manager_columns',array(
-			'items' => __('Items','Shopp'),
-			'qty' => __('Quantity','Shopp'),
-			'price' => __('Price','Shopp'),
-			'total' => __('Total','Shopp')
+		ShoppUI::register_column_headers($this->id, apply_filters('shopp_order_manager_columns', array(
+			'items' => Shopp::__('Items'),
+			'qty'   => Shopp::__('Quantity'),
+			'price' => Shopp::__('Price'),
+			'total' => Shopp::__('Total')
 		)));
 
 		new ShoppAdminOrderContactBox(
@@ -1085,421 +1318,422 @@ class ShoppScreenOrderEntry extends ShoppScreenOrderManager {
 		$Purchase->Customer = new ShoppCustomer($Purchase->customer);
 		$Gateway = $Purchase->gateway();
 
-		if ( ! empty($_POST['send-note']) ){
-			$user = wp_get_current_user();
-			shopp_add_order_event($Purchase->id,'note',array(
-				'note' => stripslashes($_POST['note']),
-				'user' => $user->ID
-			));
-
-			$Purchase->load_events();
-		}
-
-		if ( isset($_POST['submit-shipments']) && isset($_POST['shipment']) && !empty($_POST['shipment']) ) {
-			$shipments = $_POST['shipment'];
-			foreach ((array)$shipments as $shipment) {
-				shopp_add_order_event($Purchase->id,'shipped',array(
-					'tracking' => $shipment['tracking'],
-					'carrier' => $shipment['carrier']
-				));
-			}
-			$updated = __('Shipping notice sent.','Shopp');
-
-			// Save shipping carrier default preference for the user
-			$userid = get_current_user_id();
-			$setting = 'shopp_shipping_carrier';
-			if ( ! get_user_meta($userid, $setting, true) )
-				add_user_meta($userid, $setting, $shipment['carrier']);
-			else update_user_meta($userid, $setting, $shipment['carrier']);
-
-			unset($_POST['ship-notice']);
-			$Purchase->load_events();
-		}
-
-		if (isset($_POST['order-action']) && 'refund' == $_POST['order-action']) {
-			if ( ! current_user_can('shopp_refund') )
-				wp_die(__('You do not have sufficient permissions to carry out this action.','Shopp'));
-
-			$user = wp_get_current_user();
-			$reason = (int)$_POST['reason'];
-			$amount = Shopp::floatval($_POST['amount']);
-
-			if (!empty($_POST['message'])) {
-				$message = $_POST['message'];
-				$Purchase->message['note'] = $message;
-			}
-
-			if (!Shopp::str_true($_POST['send'])) { // Force the order status
-				shopp_add_order_event($Purchase->id,'notice',array(
-					'user' => $user->ID,
-					'kind' => 'refunded',
-					'notice' => __('Marked Refunded','Shopp')
-				));
-				shopp_add_order_event($Purchase->id,'refunded',array(
-					'txnid' => $Purchase->txnid,
-					'gateway' => $Gateway->module,
-					'amount' => $amount
-				));
-				shopp_add_order_event($Purchase->id,'voided',array(
-					'txnorigin' => $Purchase->txnid,	// Original transaction ID (txnid of original Purchase record)
-					'txnid' => time(),					// Transaction ID for the VOID event
-					'gateway' => $Gateway->module		// Gateway handler name (module name from @subpackage)
-				));
-			} else {
-				shopp_add_order_event($Purchase->id,'refund',array(
-					'txnid' => $Purchase->txnid,
-					'gateway' => $Gateway->module,
-					'amount' => $amount,
-					'reason' => $reason,
-					'user' => $user->ID
-				));
-			}
-
-			if (!empty($_POST['message']))
-				$this->addnote($Purchase->id,$_POST['message']);
-
-			$Purchase->load_events();
-		}
-
-		if (isset($_POST['order-action']) && 'cancel' == $_POST['order-action']) {
-			if ( ! current_user_can('shopp_void') )
-				wp_die(__('You do not have sufficient permissions to carry out this action.','Shopp'));
-
-			// unset($_POST['refund-order']);
-			$user = wp_get_current_user();
-			$reason = (int)$_POST['reason'];
-
-			$message = '';
-			if (!empty($_POST['message'])) {
-				$message = $_POST['message'];
-				$Purchase->message['note'] = $message;
-			} else $message = 0;
-
-
-			if (!Shopp::str_true($_POST['send'])) { // Force the order status
-				shopp_add_order_event($Purchase->id,'notice',array(
-					'user' => $user->ID,
-					'kind' => 'cancelled',
-					'notice' => __('Marked Cancelled','Shopp')
-				));
-				shopp_add_order_event($Purchase->id,'voided',array(
-					'txnorigin' => $Purchase->txnid,	// Original transaction ID (txnid of original Purchase record)
-					'txnid' => time(),			// Transaction ID for the VOID event
-					'gateway' => $Gateway->module		// Gateway handler name (module name from @subpackage)
-				));
-			} else {
-				shopp_add_order_event($Purchase->id,'void',array(
-					'txnid' => $Purchase->txnid,
-					'gateway' => $Gateway->module,
-					'reason' => $reason,
-					'user' => $user->ID,
-					'note' => $message
-				));
-			}
-
-			if ( ! empty($_POST['message']) )
-				$this->addnote($Purchase->id,$_POST['message']);
-
-			$Purchase->load_events();
-		}
-
-		if ( isset($_POST['billing']) && is_array($_POST['billing']) ) {
-
-			$Purchase->updates($_POST['billing']);
-			$Purchase->save();
-
-		}
-
-		if ( isset($_POST['shipping']) && is_array($_POST['shipping']) ) {
-
-			$shipping = array();
-			foreach( $_POST['shipping'] as $name => $value )
-				$shipping[ "ship$name" ] = $value;
-
-			$Purchase->updates($shipping);
-			$Purchase->shipname = $shipping['shipfirstname'] . ' ' . $shipping['shiplastname'];
-
-			$Purchase->save();
-		}
-
-
-		if ( isset($_POST['order-action']) && 'update-customer' == $_POST['order-action'] && ! empty($_POST['customer'])) {
-			$Purchase->updates($_POST['customer']);
-			$Purchase->save();
-		}
-
-		if ( isset($_POST['cancel-edit-customer']) ){
-			unset($_POST['order-action'],$_POST['edit-customer'],$_POST['select-customer']);
-		}
-
-		// Create a new customer
-		if ( isset($_POST['order-action']) && 'new-customer' == $_POST['order-action'] && ! empty($_POST['customer']) && ! isset($_POST['cancel-edit-customer'])) {
-			$Customer = new ShoppCustomer();
-			$Customer->updates($_POST['customer']);
-			$Customer->password = wp_generate_password(12,true);
-			if ( 'wordpress' == shopp_setting('account_system') ) $Customer->create_wpuser();
-			else unset($_POST['loginname']);
-			$Customer->save();
-			if ( (int)$Customer->id > 0 ) {
-				$Purchase->customer = $Customer->id;
-				$Purchase->copydata($Customer);
-				$Purchase->save();
-
-				// New billing address, create record for new customer
-				if ( isset($_POST['billing']) && is_array($_POST['billing']) && empty($_POST['billing']['id']) ) {
-					$Billing = new BillingAddress($_POST['billing']);
-					$Billing->customer = $Customer->id;
-					$Billing->save();
-				}
-
-				// New shipping address, create record for new customer
-				if ( isset($_POST['shipping']) && is_array($_POST['shipping']) && empty($_POST['shipping']['id']) ) {
-					$Shipping = new ShippingAddress($_POST['shipping']);
-					$Shipping->customer = $Customer->id;
-					$Shipping->save();
-				}
-
-			} else $this->notice(Shopp::__('An unknown error occured. The customer could not be created.'), 'error');
-		}
-
-		if ( isset($_GET['order-action']) && 'change-customer' == $_GET['order-action'] && ! empty($_GET['customerid'])) {
-			$Customer = new ShoppCustomer((int)$_GET['customerid']);
-			if ( (int)$Customer->id > 0) {
-				$Purchase->copydata($Customer);
-				$Purchase->customer = $Customer->id;
-				$Purchase->save();
-			} else $this->notice(Shopp::__('The selected customer was not found.'), 'error');
-		}
-
-		if ( isset($_POST['save-item']) && isset($_POST['lineid']) ) {
-
-			if ( isset($_POST['lineid']) && '' == $_POST['lineid'] ) {
-				$lineid = 'new';
-			} else $lineid = (int)$_POST['lineid'];
-
-			$name = $_POST['itemname'];
-			if ( ! empty( $_POST['product']) ) {
-				list($productid, $priceid) = explode('-', $_POST['product']);
-				$Product = new ShoppProduct($productid);
-				$Price = new ShoppPrice($priceid);
-				$name = $Product->name;
-				if ( Shopp::__('Price & Delivery') != $Price->label )
-					$name .= ": $Price->label";
-			}
-
-			// Create a cart representation of the order to recalculate order totals
-			$Cart = new ShoppCart();
-
-			$taxcountry = $Purchase->country;
-			$taxstate = $Purchase->state;
-			if ( ! empty($Purchase->shipcountry) && ! empty($Purchase->shipstate) ) {
-				$taxcountry = $Purchase->shipcountry;
-				$taxstate = $Purchase->shipstate;
-			}
-			ShoppOrder()->Tax->location($taxcountry, $taxstate);
-
-			if ( 'new' == $lineid ) {
-				$NewLineItem = new ShoppPurchased();
-				$NewLineItem->purchase = $Purchase->id;
-				$Purchase->purchased[] = $NewLineItem;
-			}
-
-			foreach ( $Purchase->purchased as &$Purchased ) {
-				$CartItem = new ShoppCartItem($Purchased);
-
-				if ( $Purchased->id == $lineid || ('new' == $lineid && empty($Purchased->id) ) ) {
-
-					if ( ! empty( $_POST['product']) ) {
-						list($CartItem->product, $CartItem->priceline) = explode('-', $_POST['product']);
-					} elseif ( ! empty($_POST['id']) ) {
-						list($CartItem->product, $CartItem->priceline) = explode('-', $_POST['id']);
-					}
-
-					$CartItem->name = $name;
-					$CartItem->unitprice = Shopp::floatval($_POST['unitprice']);
-					$Cart->additem((int)$_POST['quantity'], $CartItem);
-					$CartItem = $Cart->get($CartItem->fingerprint());
-
-					$Purchased->name = $CartItem->name;
-					$Purchased->product = $CartItem->product;
-					$Purchased->price = $CartItem->priceline;
-					$Purchased->quantity = $CartItem->quantity;
-					$Purchased->unitprice = $CartItem->unitprice;
-					$Purchased->total = $CartItem->total;
-					$Purchased->save();
-
-				} else $Cart->additem($CartItem->quantity, $CartItem);
-
-			}
-
-			$Cart->Totals->register( new OrderAmountShipping( array('id' => 'cart', 'amount' => $Purchase->freight ) ) );
-
-			$Purchase->total = $Cart->total();
-			$Purchase->subtotal = $Cart->total('order');
-			$Purchase->discount = $Cart->total('discount');
-			$Purchase->tax = $Cart->total('tax');
-			$Purchase->freight = $Cart->total('shipping');
-			$Purchase->save();
-			$Purchase->load_purchased();
-
-		}
-
-		if ( ! empty($_POST['save-totals']) ) {
-
-			$totals = array();
-			if ( ! empty($_POST['totals']) )
-				$totals = $_POST['totals'];
-
-			$objects = array(
-				'tax' => 'OrderAmountTax',
-				'shipping' => 'OrderAmountShipping',
-				'discount' => 'OrderAmountDiscount'
-			);
-
-			$methods = array(
-				'fee' => 'fees',
-				'tax' => 'taxes',
-				'shipping' => 'shipfees',
-				'discount' => 'discounts'
-			);
-
-			$total = 0;
-			foreach ( $totals as $property => $fields ) {
-				if ( empty($fields) ) continue;
-
-				if ( count($fields) > 1 ) {
-					if ( isset($fields['labels']) ) {
-						$labels = $fields['labels'];
-						unset($fields['labels']);
-						if ( count($fields) > count($labels) )
-							$totalfield = array_pop($fields);
-
-						$fields = array_combine($labels, $fields);
-					}
-
-					$fields = array_map(array('Shopp', 'floatval'), $fields);
-
-					$entries = array();
-					$OrderAmountObject = isset($objects[ $property ]) ? $objects[ $property ] : 'OrderAmountFee';
-					foreach ( $fields as $label => $amount )
-						$entries[] = new $OrderAmountObject(array('id' => count($entries) + 1, 'label' => $label, 'amount' => $amount));
-
-					$savetotal = isset($methods[ $property ]) ? $methods[ $property ] : $fees;
-					$Purchase->$savetotal($entries);
-
-					$sum = array_sum($fields);
-					if ( $sum > 0 )
-						$Purchase->$property = $sum;
-
-				} else $Purchase->$property = Shopp::floatval($fields[0]);
-
-				$total += ('discount' == $property ? $Purchase->$property * -1 : $Purchase->$property );
-
-			}
-
-			$Purchase->total = $Purchase->subtotal + $total;
-			$Purchase->save();
-		}
-
-		if ( ! empty($_GET['rmvline']) ) {
-			$lineid = (int)$_GET['rmvline'];
-			if ( isset($Purchase->purchased[ $lineid ]) ) {
-				$Purchase->purchased[ $lineid ]->delete();
-				unset($Purchase->purchased[ $lineid ]);
-			}
-
-			$Cart = new ShoppCart();
-
-			$taxcountry = $Purchase->country;
-			$taxstate = $Purchase->state;
-			if ( ! empty($Purchase->shipcountry) && ! empty($Purchase->shipstate) ) {
-				$taxcountry = $Purchase->shipcountry;
-				$taxstate = $Purchase->shipstate;
-			}
-			ShoppOrder()->Tax->location($taxcountry, $taxstate);
-
-			foreach ( $Purchase->purchased as &$Purchased )
-				$Cart->additem($Purchased->quantity, new ShoppCartItem($Purchased));
-
-			$Cart->Totals->register( new OrderAmountShipping( array('id' => 'cart', 'amount' => $Purchase->freight ) ) );
-
-			$Purchase->total = $Cart->total();
-			$Purchase->subtotal = $Cart->total('order');
-			$Purchase->discount = $Cart->total('discount');
-			$Purchase->tax = $Cart->total('tax');
-			$Purchase->freight = $Cart->total('shipping');
-			$Purchase->save();
-
-			$Purchase->load_purchased();
-		}
-
-
-		if (isset($_POST['charge']) && $Gateway && $Gateway->captures) {
-			if ( ! current_user_can('shopp_capture') )
-				wp_die(__('You do not have sufficient permissions to carry out this action.','Shopp'));
-
-			$user = wp_get_current_user();
-
-			shopp_add_order_event($Purchase->id,'capture',array(
-				'txnid' => $Purchase->txnid,
-				'gateway' => $Purchase->gateway,
-				'amount' => $Purchase->capturable(),
-				'user' => $user->ID
-			));
-
-			$Purchase->load_events();
-		}
-
-		$targets = shopp_setting('target_markets');
-		$default = array('' => '&nbsp;');
-		$Purchase->_countries = array_merge($default, ShoppLookup::countries());
-
-		$regions = Lookup::country_zones();
-		$Purchase->_billing_states = array_merge($default, (array)$regions[ $Purchase->country ]);
-		$Purchase->_shipping_states = array_merge($default, (array)$regions[ $Purchase->shipcountry ]);
-
-		// Setup shipping carriers menu and JS data
-		$carriers_menu = $carriers_json = array();
-		$shipping_carriers = (array) shopp_setting('shipping_carriers'); // The store-preferred shipping carriers
-		$shipcarriers = Lookup::shipcarriers(); // The full list of available shipping carriers
-		$notrack = Shopp::__('No Tracking'); // No tracking label
-		$default = get_user_meta(get_current_user_id(), 'shopp_shipping_carrier', true);
-
-		if ( isset($shipcarriers[ $default ]) ) {
-			$carriers_menu[ $default ] = $shipcarriers[ $default ]->name;
-			$carriers_json[ $default ] = array($shipcarriers[ $default ]->name, $shipcarriers[ $default ]->trackpattern);
-		} else {
-			$carriers_menu['NOTRACKING'] = $notrack;
-			$carriers_json['NOTRACKING'] = array($notrack, false);
-		}
-
-			$serviceareas = array('*', ShoppBaseLocale()->country());
-			foreach ( $shipcarriers as $code => $carrier ) {
-			if ( $code == $default ) continue;
-			if ( ! empty($shipping_carriers) && ! in_array($code, $shipping_carriers) ) continue;
-				if ( ! in_array($carrier->areas, $serviceareas) ) continue;
-				$carriers_menu[ $code ] = $carrier->name;
-				$carriers_json[ $code ] = array($carrier->name, $carrier->trackpattern);
-			}
-
-		if ( isset($shipcarriers[ $default ]) ) {
-			$carriers_menu['NOTRACKING'] = $notrack;
-			$carriers_json['NOTRACKING'] = array($notrack, false);
-		}
-
-		if ( empty($statusLabels) ) $statusLabels = array('');
+        // if ( ! empty($_POST['send-note']) ){
+        //     $user = wp_get_current_user();
+        //     shopp_add_order_event($Purchase->id,'note',array(
+        //         'note' => stripslashes($_POST['note']),
+        //         'user' => $user->ID
+        //     ));
+        //
+        //     $Purchase->load_events();
+        // }
+        //
+        // if ( isset($_POST['submit-shipments']) && isset($_POST['shipment']) && !empty($_POST['shipment']) ) {
+        //     $shipments = $_POST['shipment'];
+        //     foreach ((array)$shipments as $shipment) {
+        //         shopp_add_order_event($Purchase->id,'shipped',array(
+        //             'tracking' => $shipment['tracking'],
+        //             'carrier' => $shipment['carrier']
+        //         ));
+        //     }
+        //     $this->notice(Shopp::__('Shipping notice sent.'));
+        //
+        //     // Save shipping carrier default preference for the user
+        //     $userid = get_current_user_id();
+        //     $setting = 'shopp_shipping_carrier';
+        //     if ( ! get_user_meta($userid, $setting, true) )
+        //         add_user_meta($userid, $setting, $shipment['carrier']);
+        //     else update_user_meta($userid, $setting, $shipment['carrier']);
+        //
+        //     unset($_POST['ship-notice']);
+        //     $Purchase->load_events();
+        // }
+        //
+        // if (isset($_POST['order-action']) && 'refund' == $_POST['order-action']) {
+        //     if ( ! current_user_can('shopp_refund') )
+        //         wp_die(__('You do not have sufficient permissions to carry out this action.','Shopp'));
+        //
+        //     $user = wp_get_current_user();
+        //     $reason = (int)$_POST['reason'];
+        //     $amount = Shopp::floatval($_POST['amount']);
+        //
+        //     if (!empty($_POST['message'])) {
+        //         $message = $_POST['message'];
+        //         $Purchase->message['note'] = $message;
+        //     }
+        //
+        //     if (!Shopp::str_true($_POST['send'])) { // Force the order status
+        //         shopp_add_order_event($Purchase->id,'notice',array(
+        //             'user' => $user->ID,
+        //             'kind' => 'refunded',
+        //             'notice' => __('Marked Refunded','Shopp')
+        //         ));
+        //         shopp_add_order_event($Purchase->id,'refunded',array(
+        //             'txnid' => $Purchase->txnid,
+        //             'gateway' => $Gateway->module,
+        //             'amount' => $amount
+        //         ));
+        //         shopp_add_order_event($Purchase->id,'voided',array(
+        //             'txnorigin' => $Purchase->txnid,    // Original transaction ID (txnid of original Purchase record)
+        //             'txnid' => time(),                    // Transaction ID for the VOID event
+        //             'gateway' => $Gateway->module        // Gateway handler name (module name from @subpackage)
+        //         ));
+        //     } else {
+        //         shopp_add_order_event($Purchase->id,'refund',array(
+        //             'txnid' => $Purchase->txnid,
+        //             'gateway' => $Gateway->module,
+        //             'amount' => $amount,
+        //             'reason' => $reason,
+        //             'user' => $user->ID
+        //         ));
+        //     }
+        //
+        //     if (!empty($_POST['message']))
+        //         $this->addnote($Purchase->id,$_POST['message']);
+        //
+        //     $Purchase->load_events();
+        // }
+        //
+        // if (isset($_POST['order-action']) && 'cancel' == $_POST['order-action']) {
+        //     if ( ! current_user_can('shopp_void') )
+        //         wp_die(__('You do not have sufficient permissions to carry out this action.','Shopp'));
+        //
+        //     // unset($_POST['refund-order']);
+        //     $user = wp_get_current_user();
+        //     $reason = (int)$_POST['reason'];
+        //
+        //     $message = '';
+        //     if (!empty($_POST['message'])) {
+        //         $message = $_POST['message'];
+        //         $Purchase->message['note'] = $message;
+        //     } else $message = 0;
+        //
+        //
+        //     if (!Shopp::str_true($_POST['send'])) { // Force the order status
+        //         shopp_add_order_event($Purchase->id,'notice',array(
+        //             'user' => $user->ID,
+        //             'kind' => 'cancelled',
+        //             'notice' => __('Marked Cancelled','Shopp')
+        //         ));
+        //         shopp_add_order_event($Purchase->id,'voided',array(
+        //             'txnorigin' => $Purchase->txnid,    // Original transaction ID (txnid of original Purchase record)
+        //             'txnid' => time(),            // Transaction ID for the VOID event
+        //             'gateway' => $Gateway->module        // Gateway handler name (module name from @subpackage)
+        //         ));
+        //     } else {
+        //         shopp_add_order_event($Purchase->id,'void',array(
+        //             'txnid' => $Purchase->txnid,
+        //             'gateway' => $Gateway->module,
+        //             'reason' => $reason,
+        //             'user' => $user->ID,
+        //             'note' => $message
+        //         ));
+        //     }
+        //
+        //     if ( ! empty($_POST['message']) )
+        //         $this->addnote($Purchase->id,$_POST['message']);
+        //
+        //     $Purchase->load_events();
+        // }
+        //
+        // if ( isset($_POST['billing']) && is_array($_POST['billing']) ) {
+        //
+        //     $Purchase->updates($_POST['billing']);
+        //     $Purchase->save();
+        //
+        // }
+        //
+        // if ( isset($_POST['shipping']) && is_array($_POST['shipping']) ) {
+        //
+        //     $shipping = array();
+        //     foreach( $_POST['shipping'] as $name => $value )
+        //         $shipping[ "ship$name" ] = $value;
+        //
+        //     $Purchase->updates($shipping);
+        //     $Purchase->shipname = $shipping['shipfirstname'] . ' ' . $shipping['shiplastname'];
+        //
+        //     $Purchase->save();
+        // }
+        //
+        //
+        // if ( isset($_POST['order-action']) && 'update-customer' == $_POST['order-action'] && ! empty($_POST['customer'])) {
+        //     $Purchase->updates($_POST['customer']);
+        //     $Purchase->save();
+        // }
+        //
+        // if ( isset($_POST['cancel-edit-customer']) ){
+        //     unset($_POST['order-action'],$_POST['edit-customer'],$_POST['select-customer']);
+        // }
+        //
+        // // Create a new customer
+        // if ( isset($_POST['order-action']) && 'new-customer' == $_POST['order-action'] && ! empty($_POST['customer']) && ! isset($_POST['cancel-edit-customer'])) {
+        //     $Customer = new ShoppCustomer();
+        //     $Customer->updates($_POST['customer']);
+        //     $Customer->password = wp_generate_password(12,true);
+        //     if ( 'wordpress' == shopp_setting('account_system') ) $Customer->create_wpuser();
+        //     else unset($_POST['loginname']);
+        //     $Customer->save();
+        //     if ( (int)$Customer->id > 0 ) {
+        //         $Purchase->customer = $Customer->id;
+        //         $Purchase->copydata($Customer);
+        //         $Purchase->save();
+        //
+        //         // New billing address, create record for new customer
+        //         if ( isset($_POST['billing']) && is_array($_POST['billing']) && empty($_POST['billing']['id']) ) {
+        //             $Billing = new BillingAddress($_POST['billing']);
+        //             $Billing->customer = $Customer->id;
+        //             $Billing->save();
+        //         }
+        //
+        //         // New shipping address, create record for new customer
+        //         if ( isset($_POST['shipping']) && is_array($_POST['shipping']) && empty($_POST['shipping']['id']) ) {
+        //             $Shipping = new ShippingAddress($_POST['shipping']);
+        //             $Shipping->customer = $Customer->id;
+        //             $Shipping->save();
+        //         }
+        //
+        //     } else $this->notice(Shopp::__('An unknown error occured. The customer could not be created.'), 'error');
+        // }
+        //
+        // if ( isset($_GET['order-action']) && 'change-customer' == $_GET['order-action'] && ! empty($_GET['customerid'])) {
+        //     $Customer = new ShoppCustomer((int)$_GET['customerid']);
+        //     if ( (int)$Customer->id > 0) {
+        //         $Purchase->copydata($Customer);
+        //         $Purchase->customer = $Customer->id;
+        //         $Purchase->save();
+        //     } else $this->notice(Shopp::__('The selected customer was not found.'), 'error');
+        // }
+        //
+        // if ( isset($_POST['save-item']) && isset($_POST['lineid']) ) {
+        //
+        //     if ( isset($_POST['lineid']) && '' == $_POST['lineid'] ) {
+        //         $lineid = 'new';
+        //     } else $lineid = (int)$_POST['lineid'];
+        //
+        //     $name = $_POST['itemname'];
+        //     if ( ! empty( $_POST['product']) ) {
+        //         list($productid, $priceid) = explode('-', $_POST['product']);
+        //         $Product = new ShoppProduct($productid);
+        //         $Price = new ShoppPrice($priceid);
+        //         $name = $Product->name;
+        //         if ( Shopp::__('Price & Delivery') != $Price->label )
+        //             $name .= ": $Price->label";
+        //     }
+        //
+        //     // Create a cart representation of the order to recalculate order totals
+        //     $Cart = new ShoppCart();
+        //
+        //     $taxcountry = $Purchase->country;
+        //     $taxstate = $Purchase->state;
+        //     if ( ! empty($Purchase->shipcountry) && ! empty($Purchase->shipstate) ) {
+        //         $taxcountry = $Purchase->shipcountry;
+        //         $taxstate = $Purchase->shipstate;
+        //     }
+        //     ShoppOrder()->Tax->location($taxcountry, $taxstate);
+        //
+        //     if ( 'new' == $lineid ) {
+        //         $NewLineItem = new ShoppPurchased();
+        //         $NewLineItem->purchase = $Purchase->id;
+        //         $Purchase->purchased[] = $NewLineItem;
+        //     }
+        //
+        //     foreach ( $Purchase->purchased as &$Purchased ) {
+        //         $CartItem = new ShoppCartItem($Purchased);
+        //
+        //         if ( $Purchased->id == $lineid || ('new' == $lineid && empty($Purchased->id) ) ) {
+        //
+        //             if ( ! empty( $_POST['product']) ) {
+        //                 list($CartItem->product, $CartItem->priceline) = explode('-', $_POST['product']);
+        //             } elseif ( ! empty($_POST['id']) ) {
+        //                 list($CartItem->product, $CartItem->priceline) = explode('-', $_POST['id']);
+        //             }
+        //
+        //             $CartItem->name = $name;
+        //             $CartItem->unitprice = Shopp::floatval($_POST['unitprice']);
+        //             $Cart->additem((int)$_POST['quantity'], $CartItem);
+        //             $CartItem = $Cart->get($CartItem->fingerprint());
+        //
+        //             $Purchased->name = $CartItem->name;
+        //             $Purchased->product = $CartItem->product;
+        //             $Purchased->price = $CartItem->priceline;
+        //             $Purchased->quantity = $CartItem->quantity;
+        //             $Purchased->unitprice = $CartItem->unitprice;
+        //             $Purchased->total = $CartItem->total;
+        //             $Purchased->save();
+        //
+        //         } else $Cart->additem($CartItem->quantity, $CartItem);
+        //
+        //     }
+        //
+        //     $Cart->Totals->register( new OrderAmountShipping( array('id' => 'cart', 'amount' => $Purchase->freight ) ) );
+        //
+        //     $Purchase->total = $Cart->total();
+        //     $Purchase->subtotal = $Cart->total('order');
+        //     $Purchase->discount = $Cart->total('discount');
+        //     $Purchase->tax = $Cart->total('tax');
+        //     $Purchase->freight = $Cart->total('shipping');
+        //     $Purchase->save();
+        //     $Purchase->load_purchased();
+        //
+        // }
+        //
+        // if ( ! empty($_POST['save-totals']) ) {
+        //
+        //     $totals = array();
+        //     if ( ! empty($_POST['totals']) )
+        //         $totals = $_POST['totals'];
+        //
+        //     $objects = array(
+        //         'tax' => 'OrderAmountTax',
+        //         'shipping' => 'OrderAmountShipping',
+        //         'discount' => 'OrderAmountDiscount'
+        //     );
+        //
+        //     $methods = array(
+        //         'fee' => 'fees',
+        //         'tax' => 'taxes',
+        //         'shipping' => 'shipfees',
+        //         'discount' => 'discounts'
+        //     );
+        //
+        //     $total = 0;
+        //     foreach ( $totals as $property => $fields ) {
+        //         if ( empty($fields) ) continue;
+        //
+        //         if ( count($fields) > 1 ) {
+        //             if ( isset($fields['labels']) ) {
+        //                 $labels = $fields['labels'];
+        //                 unset($fields['labels']);
+        //                 $fields = array_combine($labels, $fields);
+        //             }
+        //
+        //             $fields = array_map(array('Shopp', 'floatval'), $fields);
+        //
+        //             $entries = array();
+        //             $OrderAmountObject = isset($objects[ $property ]) ? $objects[ $property ] : 'OrderAmountFee';
+        //             foreach ( $fields as $label => $amount )
+        //                 $entries[] = new $OrderAmountObject(array('id' => count($entries) + 1, 'label' => $label, 'amount' => $amount));
+        //
+        //             $savetotal = isset($methods[ $property ]) ? $methods[ $property ] : 'fees';
+        //             $Purchase->$savetotal($entries);
+        //
+        //             $sum = array_sum($fields);
+        //             if ( $sum > 0 )
+        //                 $Purchase->$property = $sum;
+        //
+        //         } else $Purchase->$property = Shopp::floatval($fields[0]);
+        //
+        //         $total += ('discount' == $property ? $Purchase->$property * -1 : $Purchase->$property );
+        //
+        //     }
+        //
+        //     $Purchase->total = $Purchase->subtotal + $total;
+        //     $Purchase->save();
+        // }
+        //
+        // if ( ! empty($_GET['rmvline']) ) {
+        //     $lineid = (int)$_GET['rmvline'];
+        //     if ( isset($Purchase->purchased[ $lineid ]) ) {
+        //         $Purchase->purchased[ $lineid ]->delete();
+        //         unset($Purchase->purchased[ $lineid ]);
+        //     }
+        //
+        //     $Cart = new ShoppCart();
+        //
+        //     $taxcountry = $Purchase->country;
+        //     $taxstate = $Purchase->state;
+        //     if ( ! empty($Purchase->shipcountry) && ! empty($Purchase->shipstate) ) {
+        //         $taxcountry = $Purchase->shipcountry;
+        //         $taxstate = $Purchase->shipstate;
+        //     }
+        //     ShoppOrder()->Tax->location($taxcountry, $taxstate);
+        //
+        //     foreach ( $Purchase->purchased as &$Purchased )
+        //         $Cart->additem($Purchased->quantity, new ShoppCartItem($Purchased));
+        //
+        //     $Cart->Totals->register( new OrderAmountShipping( array('id' => 'cart', 'amount' => $Purchase->freight ) ) );
+        //
+        //     $Purchase->total = $Cart->total();
+        //     $Purchase->subtotal = $Cart->total('order');
+        //     $Purchase->discount = $Cart->total('discount');
+        //     $Purchase->tax = $Cart->total('tax');
+        //     $Purchase->freight = $Cart->total('shipping');
+        //     $Purchase->save();
+        //
+        //     $Purchase->load_purchased();
+        // }
+        //
+        // if (isset($_POST['charge']) && $Gateway && $Gateway->captures) {
+        //     if ( ! current_user_can('shopp_capture') )
+        //         wp_die(__('You do not have sufficient permissions to carry out this action.','Shopp'));
+        //
+        //     $user = wp_get_current_user();
+        //
+        //     shopp_add_order_event($Purchase->id,'capture',array(
+        //         'txnid' => $Purchase->txnid,
+        //         'gateway' => $Purchase->gateway,
+        //         'amount' => $Purchase->capturable(),
+        //         'user' => $user->ID
+        //     ));
+        //
+        //     $Purchase->load_events();
+        // }
+
+		// $targets = shopp_setting('target_markets');
+		// $default = array('' => '&nbsp;');
+		// $Purchase->_countries = array_merge($default, ShoppLookup::countries());
+		//
+		// $regions = Lookup::country_zones();
+		// $Purchase->_billing_states = array_merge($default, (array)$regions[ $Purchase->country ]);
+		// $Purchase->_shipping_states = array_merge($default, (array)$regions[ $Purchase->shipcountry ]);
+		//
+		// // Setup shipping carriers menu and JS data
+		// $carriers_menu = $carriers_json = array();
+		// $shipping_carriers = (array) shopp_setting('shipping_carriers'); // The store-preferred shipping carriers
+		// $shipcarriers = Lookup::shipcarriers(); // The full list of available shipping carriers
+		// $notrack = Shopp::__('No Tracking'); // No tracking label
+		// $default = get_user_meta(get_current_user_id(), 'shopp_shipping_carrier', true);
+		//
+		// if ( isset($shipcarriers[ $default ]) ) {
+		//	 $carriers_menu[ $default ] = $shipcarriers[ $default ]->name;
+		//	 $carriers_json[ $default ] = array($shipcarriers[ $default ]->name, $shipcarriers[ $default ]->trackpattern);
+		// } else {
+		//	 $carriers_menu['NOTRACKING'] = $notrack;
+		//	 $carriers_json['NOTRACKING'] = array($notrack, false);
+		// }
+		//
+		//	 $serviceareas = array('*', ShoppBaseLocale()->country());
+		//	 foreach ( $shipcarriers as $code => $carrier ) {
+		//	 if ( $code == $default ) continue;
+		//	 if ( ! empty($shipping_carriers) && ! in_array($code, $shipping_carriers) ) continue;
+		//		 if ( ! in_array($carrier->areas, $serviceareas) ) continue;
+		//		 $carriers_menu[ $code ] = $carrier->name;
+		//		 $carriers_json[ $code ] = array($carrier->name, $carrier->trackpattern);
+		//	 }
+		//
+		// if ( isset($shipcarriers[ $default ]) ) {
+		//	 $carriers_menu['NOTRACKING'] = $notrack;
+		//	 $carriers_json['NOTRACKING'] = array($notrack, false);
+		// }
+		//
+		// if ( empty($statusLabels) ) $statusLabels = array('');
 
 		$Purchase->taxes();
 		$Purchase->discounts();
 
-		$columns = get_column_headers($this->id);
-		$hidden = get_hidden_columns($this->id);
+		// $columns = get_column_headers($this->id);
+		// $hidden = get_hidden_columns($this->id);
 
 		include $this->ui('new.php');
 	}
 
 } // class ShoppScreenOrderEditor
 
+/**
+ * Renders the order notes metabox
+ *
+ * @since 1.4
+ **/
 class ShoppAdminOrderNotesBox extends ShoppAdminMetabox {
 
 	protected $id = 'order-notes';
@@ -1510,7 +1744,6 @@ class ShoppAdminOrderNotesBox extends ShoppAdminMetabox {
 	}
 
 	protected function init() {
-
 		add_filter('shopp_order_note', 'esc_html');
 		add_filter('shopp_order_note', 'wptexturize');
 		add_filter('shopp_order_note', 'convert_chars');
@@ -1519,9 +1752,8 @@ class ShoppAdminOrderNotesBox extends ShoppAdminMetabox {
 		add_filter('shopp_order_note', 'convert_smilies');
 		add_filter('shopp_order_note', 'wpautop');
 
-		extract($this->references);
+		$Purchase = $this->references['Purchase'];
 		$this->references['Notes'] = new ObjectMeta($Purchase->id, 'purchase', 'order_note');
-
 	}
 
 	protected function ops() {
@@ -1535,7 +1767,7 @@ class ShoppAdminOrderNotesBox extends ShoppAdminMetabox {
 
 	public function add() {
 		if ( ! $this->form('note') ) return;
-		extract($this->references); // Extracts $Purchase
+		$Purchase = $this->references['Purchase'];
 
 		$user = wp_get_current_user();
 		$Note = new ShoppMetaObject();
@@ -1552,7 +1784,6 @@ class ShoppAdminOrderNotesBox extends ShoppAdminMetabox {
 
 		if ( ! $Note->value->sent )
 			$this->notice(Shopp::__('Added note.'));
-
 	}
 
 	public function delete() {
@@ -1588,10 +1819,10 @@ class ShoppAdminOrderNotesBox extends ShoppAdminMetabox {
 
 		if ( ! $this->form('send-note') ) return;
 
-		extract($this->references); // Extracts $Purchase
+		$Purchase = $this->references['Purchase'];
 		$user = wp_get_current_user();
 
-		$sent = shopp_add_order_event($Purchase->id, 'note', array(
+		shopp_add_order_event($Purchase->id, 'note', array(
 			'note' => $this->form('note'),
 			'user' => $user->ID
 		));
@@ -1604,7 +1835,13 @@ class ShoppAdminOrderNotesBox extends ShoppAdminMetabox {
 
 } // end class ShoppAdminOrderNotesBox
 
-
+/**
+ * Renders the order history metabox
+ *
+ * @since 
+ * 
+ * @return void
+ **/
 class ShoppAdminOrderHistoryBox extends ShoppAdminMetabox {
 
 	protected $id = 'order-history';
@@ -1616,6 +1853,11 @@ class ShoppAdminOrderHistoryBox extends ShoppAdminMetabox {
 
 } // class ShoppAdminOrderHistoryBox
 
+/**
+ * Renders the order data metabox
+ *
+ * @since 1.4
+ **/
 class ShoppAdminOrderDataBox extends ShoppAdminMetabox {
 
 	protected $id = 'order-data';
@@ -1646,6 +1888,11 @@ class ShoppAdminOrderDataBox extends ShoppAdminMetabox {
 
 } // class ShoppAdminOrderDataBox
 
+/**
+ * Renders the order contact metabox
+ *
+ * @since 1.4
+ **/
 class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 
 	protected $id = 'order-contact';
@@ -1665,7 +1912,6 @@ class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 	}
 
 	public function updates() {
-
 		if ( 'update-customer' != $this->form('order-action') ) return;
 		if ( ! $updates = $this->form('customer') ) return;
 		if ( ! is_array($updates) ) return;
@@ -1692,8 +1938,9 @@ class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 
 	public function add() {
 		if ( 'new-customer' != $this->form('order-action') ) return;
-		if ( ! $updates = $this->form('customer') ) return;
-		if ( ! is_array($updates) ) return;
+
+		$updates = $this->form('customer');
+		if ( ! ( $updates || is_array($updates) ) ) return;
 
 		extract($this->references, EXTR_SKIP);
 
@@ -1709,26 +1956,27 @@ class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 		$Customer->save();
 
 		if ( ! $Customer->exists() )
-			return $this->notice(Shopp::__('An unknown error occured. The customer could not be created.'), 'error');
+			return $this->notice(Shopp::__('An unknown error occurred. The customer could not be created.'), 'error');
 
 		$Purchase->customer = $Customer->id;
 		$Purchase->copydata($Customer);
 		$Purchase->save();
 
 		// Create a new billing address record for the new customer
-		if ( $billing = $this->form('billing') && is_array($billing) && empty($billing['id']) ) {
+		$billing = $this->form('billing');
+		if ( is_array($billing) && empty($billing['id']) ) {
 			$Billing = new BillingAddress($billing);
 			$Billing->customer = $Customer->id;
 			$Billing->save();
 		}
 
 		// Create a new shipping address record for the new customer
-		if ( $shipping = $this->form('shipping') && is_array($shipping) && empty($shipping['id']) ) {
+		$shipping = $this->form('shipping');
+		if ( is_array($shipping) && empty($shipping['id']) ) {
 			$Shipping = new ShippingAddress($shipping);
 			$Shipping->customer = $Customer->id;
 			$Shipping->save();
 		}
-
 	}
 
 	public function unedit() {
@@ -1739,6 +1987,11 @@ class ShoppAdminOrderContactBox extends ShoppAdminMetabox {
 
 } // class ShoppAdminOrderContactBox
 
+/**
+ * Renders the order billing address metabox
+ *
+ * @since 1.4
+ **/
 class ShoppAdminOrderBillingAddressBox extends ShoppAdminMetabox {
 
 	protected $id = 'order-billing';
@@ -1758,7 +2011,7 @@ class ShoppAdminOrderBillingAddressBox extends ShoppAdminMetabox {
 		return array('updates');
 	}
 
-	public function updates () {
+	public function updates() {
 		if ( ! $billing = $this->form('billing') ) return;
 		if ( ! is_array($billing) ) return;
 
@@ -1770,7 +2023,7 @@ class ShoppAdminOrderBillingAddressBox extends ShoppAdminMetabox {
 		$this->notice(Shopp::__('Updated billing address.'));
 	}
 
-	public function purchase ( ShoppPurchase $Purchase = null ) {
+	public function purchase( ShoppPurchase $Purchase = null ) {
 		if ( isset($Purchase) )
 			$this->Purchase = $Purchase;
 	}
@@ -1780,7 +2033,7 @@ class ShoppAdminOrderBillingAddressBox extends ShoppAdminMetabox {
 		$Purchase = $this->Purchase;
 
 		ob_start();
-		include $this->ui('orders/address.php');
+		include $this->ui('orders/address.php', array($Purchase, $type));
 		return ob_get_clean();
 	}
 
@@ -1828,6 +2081,11 @@ class ShoppAdminOrderBillingAddressBox extends ShoppAdminMetabox {
 
 } // class ShoppAdminOrderBillingAddressBox
 
+/**
+ * Renders the order shipping address metabox
+ *
+ * @since 1.4
+ **/
 class ShoppAdminOrderShippingAddressBox extends ShoppAdminOrderBillingAddressBox {
 
 	protected $id = 'order-shipping';
@@ -1836,11 +2094,11 @@ class ShoppAdminOrderShippingAddressBox extends ShoppAdminOrderBillingAddressBox
 
 	protected $Purchase = false;
 
-	protected function title () {
+	protected function title() {
 		return Shopp::__('Shipping Address');
 	}
 
-	public function updates () {
+	public function updates() {
 
 		if ( ! $shipping = $this->form('shipping') ) return;
 		if ( ! is_array($shipping) ) return;
@@ -1898,21 +2156,26 @@ class ShoppAdminOrderShippingAddressBox extends ShoppAdminOrderBillingAddressBox
 
 } // class ShoppAdminOrderShippingAddressBox
 
-
+/**
+ * Renders the order management metabox
+ *
+ * @since 1.4
+ **/
 class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 
 	protected $id = 'order-manage';
 	protected $view = 'orders/manage.php';
 
-	protected function title () {
+	protected function title() {
 		return Shopp::__('Management');
 	}
 
 	public function references() {
 		$Purchase = $this->references['Purchase'];
 		$Gateway = $Purchase->gateway();
-
+		
 		$this->references['gateway_name'] = $Gateway ? $Gateway->name : '';
+		$this->references['gateway_module'] = $Gateway ? $Gateway->module : '';
 		$this->references['gateway_refunds'] = $Gateway ? $Gateway->refunds : false;
 		$this->references['gateway_captures'] = $Gateway ? $Gateway->captures : false;
 
@@ -1925,7 +2188,7 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 	}
 
 	protected function init() {
-		extract($this->references);
+		$Purchase = $this->references['Purchase'];
 		$Purchase->load_events();
 	}
 
@@ -1938,8 +2201,8 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 		);
 	}
 
-	public function shipnotice () {
-		extract($this->references);
+	public function shipnotice() {
+		$Purchase = $this->references['Purchase'];
 		if ( ! $shipments = $this->form('shipment') ) return;
 
 		foreach ( (array) $shipments as $shipment ) {
@@ -1967,9 +2230,12 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 			wp_die(Shopp::__('You do not have sufficient permissions to carry out this action.'));
 
 		extract($this->references);
+		$Purchase = $this->references['Purchase'];
+		$gateway_module = $this->references['gateway_module'];
+		
 		$user = wp_get_current_user();
-		$reason = (int)$_POST['reason'];
-		$amount = Shopp::floatval($_POST['amount']);
+		$reason = (int)$this->form('reason');
+		$amount = Shopp::floatval($this->form('amount'));
 
 		if ( $this->form('message') )
 			$Purchase->message['note'] = $this->form('message');
@@ -1979,10 +2245,10 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 			// Submit the refund request to the payment gateway
 			shopp_add_order_event($Purchase->id, 'refund', array(
 				'txnid'   => $Purchase->txnid,
-				'gateway' => $Gateway->module,
+				'gateway' => $gateway_module,
 				'amount'  => $amount,
 				'reason'  => $reason,
-				'user'    => $user->ID
+				'user'	=> $user->ID
 			));
 
 		} else {
@@ -2008,7 +2274,7 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 			shopp_add_order_event($Purchase->id, 'voided', array(
 				'gateway'   => $Gateway->module,
 				'txnorigin' => $Purchase->txnid,
-				'txnid'     => current_time('timestamp')
+				'txnid'	 => current_time('timestamp')
 			));
 
 			$this->notice(Shopp::__('Order marked refunded.'));
@@ -2017,7 +2283,7 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 
 	}
 
-	public function cancel () {
+	public function cancel() {
 		if ( 'cancel' != $this->form('order-action') ) return;
 
 		if ( ! current_user_can('shopp_void') )
@@ -2040,8 +2306,8 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 				'gateway' => $Gateway->module,
 				'txnid'   => $Purchase->txnid,
 				'reason'  => $reason,
-				'user'    => $user->ID,
-				'note'    => $message
+				'user'	=> $user->ID,
+				'note'	=> $message
 			));
 
 		} else {
@@ -2068,7 +2334,9 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 	public function charge() {
 		if ( ! $this->form('charge') ) return;
 
-		extract($this->references);
+		$Purchase = $this->references['Purchase'];
+		$gateway_captures = $this->references['gateway_captures'];
+				
 		if ( ! $gateway_captures ) return;
 
 		if ( ! current_user_can('shopp_capture') )
@@ -2080,7 +2348,7 @@ class ShoppAdminOrderManageBox extends ShoppAdminMetabox {
 			'txnid'   => $Purchase->txnid,
 			'gateway' => $Purchase->gateway,
 			'amount'  => $Purchase->capturable(),
-			'user'    => $user->ID
+			'user'	=> $user->ID
 		));
 	}
 
