@@ -73,7 +73,7 @@ class ShoppScreenProducts extends ShoppScreenController {
 	 * @return void
 	 **/
 	public function bulkaction () {
-		$actions = array('unpublish', 'unpublish', 'trash', 'feature', 'defeature');
+		$actions = array('publish', 'unpublish', 'trash', 'feature', 'defeature');
 
 		$request = $this->request('action');
 		$selected = (array)$this->request('selected');
