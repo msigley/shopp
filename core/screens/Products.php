@@ -73,10 +73,11 @@ class ShoppScreenProducts extends ShoppScreenController {
 	 * @return void
 	 **/
 	public function bulkaction () {
-		$actions = array('publish', 'unpublish', 'trash', 'feature', 'defeature');
+		$actions = array('publish', 'unpublish', 'trash', 'restore', 'feature', 'defeature');
 
 		$request = $this->request('action');
 		$selected = (array)$this->request('selected');
+        $selected = array_map('absint', $selected);
 
 		if ( ! in_array($request, $actions) ) return;
 
@@ -90,6 +91,10 @@ class ShoppScreenProducts extends ShoppScreenController {
 
 		if ( 'trash' == $request )
 			ShoppProduct::publishset($selected, 'trash');
+        
+        if ( 'restore' == $request ){
+            ShoppProduct::publishset($selected, 'draft');
+        }
 
 		if ( 'feature' == $request )
 			ShoppProduct::featureset($selected, 'on');
