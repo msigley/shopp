@@ -32,6 +32,9 @@ abstract class ShoppSessionFramework {
 	/** @var array $data The session data structure */
 	public $data;
 
+	/** @var array $data_checksum MD5 Checksum of the session data structure created when it was loaded from the database */
+	public $data_checksum;
+
 	/** @var int $stash Flag to mark a session to be stashed */
 	public $stash = 0;
 
@@ -167,6 +170,7 @@ abstract class ShoppSessionFramework {
 
 		$this->session = $loaded->session;
 		$this->ip = $loaded->ip;
+		$this->data_checksum = md5($loaded->data);
 		$this->data = unserialize($loaded->data);
 		$this->stash = $loaded->stash;
 		$this->created = sDB::mktime($loaded->created);
@@ -228,14 +232,19 @@ abstract class ShoppSessionFramework {
 			)
 			return false;
 
-		if ( empty($this->session) ) return false; // Do not save if there is no session id
+		if ( empty($this->session) ) 
+			return false; // Do not save if there is no session id
 
 		if ( false === $this->data )
 			return false; // Encryption failed because of no SSL, do not save
 
+		$data = serialize($this->data);
+		if ( $this->data_checksum === md5( $data ) )
+			return false; // Session hasn't changed, do not save
+
 		do_action('shopp_session_save');
 
-		$data = sDB::escape( addslashes(serialize($this->data)) );
+		$data = sDB::escape( addslashes($data) );
 		$this->encrypt($data);
 
 		$now = current_time('mysql');
@@ -356,8 +365,10 @@ abstract class ShoppSessionFramework {
 	 **/
 	protected function create ( $session ) {
 		$now = current_time('mysql');
-		$query = "INSERT $this->_table SET session='$session',data='',ip='$this->ip',created='$now',modified='$now'";
-		return sDB::query($query);
+		$result = sDB::query( "INSERT $this->_table SET session='$session',data='',ip='$this->ip',created='$now',modified='$now'" );
+		if( $result )
+			$this->data_checksum = md5('');
+		return $result;
 	}
 
 	/**
