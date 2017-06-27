@@ -254,12 +254,12 @@ abstract class ShoppSessionFramework {
 	/**
 	 * Randomly clean up stale sessions
 	 *
-	 * Clean up stale sessions on 1% of connections
+	 * ~%1 chance of this not happening in 25 requests
 	 *
 	 * @return void
 	 **/
 	private function trim () {
-		if ( ! mt_rand(0, 99) )
+		if ( ! mt_rand(0, 5) )
 			$this->clean();
 	}
 
@@ -273,12 +273,28 @@ abstract class ShoppSessionFramework {
 	 * @return bool True if successful, false otherwise
 	 **/
 	public function clean () {
-		$timeout = SHOPP_SESSION_TIMEOUT;
-		$now = current_time('mysql');
-
-		if ( ! sDB::query("DELETE FROM $this->_table WHERE data='' OR $timeout < UNIX_TIMESTAMP('$now') - UNIX_TIMESTAMP(modified)") )
-			trigger_error("Could not delete expired sessions.");
-
+		//Use HOUR units for better DB memcache support (redis)
+		$timeout = SHOPP_SESSION_TIMEOUT / 3600;
+		$now = current_time('Y-m-d H:00:00');
+		
+		$result = sDB::query( "SELECT COUNT(1) as num_to_clean FROM $this->_table WHERE 2 < TIMESTAMPDIFF( HOUR, modified, '$now' )", 'object' );
+		if ( empty($result) ) {
+			trigger_error( "Could not check for expired cached session data." );
+			return false;
+		}
+		if ( ! empty( $result->num_to_clean ) ) {
+			$num_to_clean = (int)( $result->num_to_clean / 4 );
+			if( $num_to_clean < 50 ) //Enforce minimum LIMIT for faster clean up
+				$num_to_clean = 50;
+			/* Use DELETE QUICK for faster MyISAM (Aria) performance. 
+			 * Skips the repacking of the table that normally occurs.
+			 * Since I/O on the session table is high, the file size doesn't really matter.
+			 * Only DELETE 25% of expired sessions at a time.
+			 */
+			if ( ! sDB::query( "DELETE QUICK FROM $this->_table WHERE $timeout < TIMESTAMPDIFF( HOUR, modified, '$now' ) LIMIT $num_to_clean" ) )
+				trigger_error( "Could not delete cached session data." );
+				return false;
+		}
 		return true;
 	}
 
